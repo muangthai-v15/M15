@@ -1,0 +1,5055 @@
+// ==UserScript==
+// @name         Ultra Performance V27.1-TV (OMNIFORGE REMOTE FIXED)
+// @namespace    Violentmonkey Scripts
+// @version      27.1.0
+// @description  Hyper-optimized Android TV Browser Video Controller. Multi-Layer Key Capture (window/document/shadowRoot + keydown/keyup), Cross-Origin Iframe Focus & PostMessage Bridge, Synthetic TV Spatial Navigation Override, 10-Foot TV UI, Seamless Auto-Next & Ad Quarantine.
+// @author       Senior JavaScript Engineer & 404тнєвσσм
+// @match        *://*/*
+// @allFrames    true
+// @grant        GM_getValue
+// @grant        GM_setValue
+// @grant        unsafeWindow
+// @run-at       document-start
+// ==/UserScript==
+
+(() => {
+  'use strict';
+
+  const KEY = '__TM_VIDEO_CONTROLLER_V271_TV__';
+  const pageWin = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
+  if (window[KEY] || pageWin[KEY]) return;
+  window[KEY] = true;
+  try { pageWin[KEY] = true; } catch (_) {}
+
+  // Fast-Exit Guard สำหรับ Tracking/Ad Iframes ขนาดจิ๋ว
+  if (window !== window.top) {
+    try {
+      if (window.innerWidth > 0 && window.innerHeight > 0 && window.innerWidth < 40 && window.innerHeight < 40) {
+        return;
+      }
+    } catch (_) {}
+  }
+
+  const instanceId = Math.random().toString(36).slice(2, 10);
+  let lastRecoveryTime = 0;
+
+  const CFG = {
+    schemaVersion: 271,
+    hideDelay: 4800,
+    seekStep: 30,
+    maxDepth: 7,
+    minMainVideoDurationSec: 240,
+    bestVideoCacheMs: 320,
+    adWatchIntervalMs: 1100,
+    ajaxTimeoutMs: 4200,
+    shadowHostId: '__tmv271_host',
+    overlayId: '__tmv271_overlay',
+    hostStyleId: '__tmv271_host_style',
+    recoveryHostId: '__tmv271_rec_host',
+    recoveryId: '__tmv271_recovery',
+    hostAttr: 'data-tmv271-host',
+    pseudoAttr: 'data-tmv271-pseudo',
+    parentIframeFsAttr: 'data-tmv271-iframe-fs',
+    parentWrapFsAttr: 'data-tmv271-wrap-fs',
+    videoAttr: 'data-tmv271-video',
+    fitAttr: 'data-tmv271-fit',
+    lockScrollAttr: 'data-tmv271-noscroll',
+    titleType: '__TMV271_TITLE__',
+    prefKey: '__tmv271_tv_prefs__',
+    resumeKey: '__tmv271_resume__',
+    epScrollKey: '__tmv271_ep_scroll__',
+    autoFsBridgeKey: '__tmv271_autofs_bridge__'
+  };
+
+  const ASPECT_MODES = [
+    { key: 'contain', label: 'พอดีจอ (Contain)' },
+    { key: 'cover', label: 'เต็มจอ (Cover)' },
+    { key: 'fill', label: 'ยืดเต็มจอ (Stretch)' }
+  ];
+
+  const SVG = {
+    play: '<path d="M7 4l13 8-13 8z" fill="currentColor" stroke="none"/>',
+    pause: '<rect x="5" y="4" width="5" height="16" rx="1" fill="currentColor" stroke="none"/><rect x="14" y="4" width="5" height="16" rx="1" fill="currentColor" stroke="none"/>',
+    back: '<path d="M12.5 3a9 9 0 1 0 8.7 6.6M12.5 3V7M12.5 3L8.5 3"/><text x="12" y="15.5" font-size="7.5" font-weight="bold" text-anchor="middle" fill="currentColor" stroke="none" class="v271-seek-txt">30</text>',
+    next: '<path d="M11.5 3a9 9 0 1 1-8.7 6.6M11.5 3V7M11.5 3L15.5 3"/><text x="12" y="15.5" font-size="7.5" font-weight="bold" text-anchor="middle" fill="currentColor" stroke="none" class="v271-seek-txt">30</text>',
+    nextEp: '<polygon points="5 4 15 12 5 20 5 4" fill="currentColor" stroke="none"/><line x1="19" y1="5" x2="19" y2="19" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/>',
+    aspect: '<rect x="2.5" y="2.5" width="19" height="19" rx="5"/><path d="M7.5 16.5 16.5 7.5M11.5 7.5h5v5M12.5 16.5h-5v-5"/>',
+    rocket: '<path d="M3.6 16.2A9.5 9.5 0 0 1 12 2.5"/><path d="M21.5 12a9.5 9.5 0 0 1-15.9 7l4-4"/><path d="M10.2 11.2 7 10.5 8.5 8h3.7c2.8-2.8 5.2-3.3 7-3.2.1 1.8-.4 4.2-3.2 7v3.7l-2.5 1.5-.7-3.2"/>',
+    fastForward: '<polygon points="13 19 22 12 13 5 13 19" fill="currentColor" stroke="none"/><polygon points="2 19 11 12 2 5 2 19" fill="currentColor" stroke="none"/>',
+    history: '<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/>',
+    settings: '<circle cx="12" cy="12" r="3.2"/><path d="M10.91 2.46L13.09 2.46L13.61 4.98L15.65 5.83L17.98 4.49L19.51 6.02L18.17 8.35L19.02 10.39L21.54 10.91L21.54 13.09L19.02 13.61L18.17 15.65L19.51 17.98L17.98 19.51L15.65 18.17L13.61 19.02L13.09 21.54L10.91 21.54L10.39 19.02L8.35 18.17L6.02 19.51L4.49 17.98L5.83 15.65L4.98 13.61L2.46 13.09L2.46 10.91L4.98 10.39L5.83 8.35L4.49 6.02L6.02 4.49L8.35 5.83L10.39 4.98Z"/>',
+    exit: '<path d="M4 14h6v6M20 10h-6V4M14 10l7-7M10 14l-7 7"/>',
+    enter: '<path d="M8 3H5a2 2 0 0 0-2 2v3M18 3h3a2 2 0 0 1 2 2v3M18 21h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/>',
+    sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M6.3 17.7l-1.4 1.4M19.1 4.9l-1.4 1.4"/>',
+    volume: '<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15 8a5 5 0 0 1 0 8M18 5a9 9 0 0 1 0 14"/>',
+    mute: '<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="m17 9 5 6m0-6-5 6"/>',
+    tv: '<rect x="2" y="4" width="20" height="14" rx="2"/><path d="M8 21h8M12 18v3"/>'
+  };
+
+  const RX = {
+    whitespace: /\s+/g,
+    siteSuffix: /\s*[-|–—]\s*(YouTube|Netflix|Facebook|EPORNER|XVIDEOS(\.COM)?|PORNHUB(\.COM)?|Bilibili|Twitch|320HD\w*|123-HD\w*|037HD\w*|24-HD\w*|Nung2HD\w*|Bugaboo\w*|WeTV\w*|iQIYI\w*|Viu\w*|ANIME-HIT\w*|HIT-ANIME\w*|ANIME-DEE\w*).*$/i,
+    thaiSuffix: /\s+(ดูหนังออนไลน์|ดูซีรี่ย์ฟรี|ดูซีรีย์ฟรี|ดูซีรี่ย์ออนไลน์|ดูหนังฟรี|ซับไทย|พากย์ไทย|เต็มเรื่อง)\s*[a-zA-Z0-9.-]*$/i,
+    thaiPrefix: /^(?:ดูหนังออนไลน์|ดูหนังฟรี|ดูหนัง|ดูซีรี่ย์ออนไลน์|ดูซีรีย์ออนไลน์|ดูซีรีส์ออนไลน์|ดูซีรี่ย์|ดูซีรีย์|ดูซีรีส์|ดูการ์ตูน|ดูอนิเมะ|ดูละคร)(?:จีน|เกาหลี|ฝรั่ง|ญี่ปุ่น|ไทย|เอเชีย|พากย์ไทย|ซับไทย)?(?:\s*[-–—:]\s*|\s+)/i,
+    epSuffix: /\s*(?:[-–—|:•]\s*)?(?:Season\s*\d+\s*)?(?:EP\.?|Episode|ตอน(?:ที่)?|บทที่)\s*\d+(?:\.\d+)?(?:\s*[-–—~ถึง/]\s*\d+)?(?:\s*\(?จบ\)?|\s*END)?.*$/i,
+    epRange: /(?:EP\.?|Episode|ตอน(?:ที่)?|บทที่)\s*0*(\d{1,4})\s*[-–—~ถึง]\s*0*(\d{1,4})/i,
+    epFraction: /(?:EP\.?|Episode|ตอน(?:ที่)?|บทที่)\s*0*(\d{1,4})(?:\.\d+)?\s*\/\s*\d{1,4}/i,
+    epExplicit: /(?:EP\.?|Episode|E|ตอน(?:ที่)?|บทที่|ซีซั่นที่\s*\d+\s*ตอน(?:ที่)?)\s*[-:#.]?\s*0*(\d{1,4}(?:\.\d+)?)(?!\s*[-–—~ถึง]\s*\d|\d)/i,
+    epBracket: /[\[(]\s*0*(\d{1,4}(?:\.\d+)?)\s*[\])]/,
+    epNumOnly: /^(?:[-•#]\s*)?0*(\d{1,4}(?:\.\d+)?)(?:\s*(?:\(?จบ\)?|END|ซับไทย|พากย์ไทย|Sub|Thai|HD|Full))?$/i,
+    epUrl: /(?:[-_/]|^)(?:ep|episode|e|ton|part)[-_]?0*(\d{1,4})(?:[-_/.]|$)/i,
+    epUrlQuery: /[?&](?:ep|episode|part|id_ep)=0*(\d{1,4})(?:&|$)/i,
+    resolutionGuard: /^(?:240|360|480|720|1080|1440|2160|4320)p?$/i,
+    serverGuard: /(?:server|สำรอง|ตัวเล่น|player|vip|หลัก|พากย์|ซับ)\s*\d*$/i,
+    nextKeyword: /^(?:next\s*ep|next\s*episode|ตอนถัดไป|ตอนต่อไป|ตอนต่อไป\s*»|»\s*ตอนถัดไป|ถัดไป|ตอนหน้า)$/i,
+    adBannerHint: /(?:banner|ads|ad-|sponsor|vip168|ufa|bet|casino|slot|baccarat|game88|โฆษณา|ป้ายโฆษณา)/i
+  };
+
+  const EP_CONTAINER_SEL = '[class*="ep"], [id*="ep"], [class*="episode"], [id*="episode"], [class*="list"], [class*="playlist"], [class*="season"], .les-content, .episodelist, .halim-list-eps, .b-list, .list-eps, .episode, [class*="episode-list"], [class*="ep-list"]';
+  const PLAYER_AREA_SEL = '.player-embed, .video-embed, #player, #video-player, .player-box, .play-box, .halim-player, .dooplay_player, .movie-player, .embed-responsive, .video-container, .player-container, [id*="player-"], [class*="player-wrap"]';
+  const AD_SKIP_SEL = '.jw-skip, .vjs-skip-button, .ytp-ad-skip-button, .ytp-ad-skip-button-modern, [class*="skip-ad"], [class*="skip_ad"], [id*="skip-ad"], [id*="skip_ad"], [class*="ad-skip"]';
+  const BIG_PLAY_SEL = '.jw-icon-display, .jw-display-icon-container, .vjs-big-play-button, .plyr__control--overlaid, .dplayer-bezel-icon, .art-state, .fp-play';
+
+  const state = {
+    video: null,
+    lastActiveVideo: null,
+    container: null,
+    shadowHost: null,
+    shadowRoot: null,
+    overlay: null,
+    refs: null,
+    abort: null,
+    videoAbort: null,
+    videoObserver: null,
+    containerObserver: null,
+    observerRaf: 0,
+    hideTimer: 0,
+    speedHideTimer: 0,
+    settingsHideTimer: 0,
+    recoveryHideTimer: 0,
+    hudTimer: 0,
+    epScrollTimer: 0,
+    autoPlayPollTimer: 0,
+    adWatchTimer: 0,
+    focusKeeperTimer: 0,
+    lastScrubSeekTs: 0,
+    progressFrame: 0,
+    wakeLock: null,
+    seeking: false,
+    interactingSlider: false,
+    destroyed: false,
+    pseudoFullscreen: false,
+    originalVideo: null,
+    originalPosition: null,
+    changedPosition: false,
+    createdWrapper: null,
+    lastVolume: 1,
+    aspectIndex: 0,
+    brightness: 1,
+    savedSpeed: 1,
+    minSpeed: 0.5,
+    maxSpeed: 2,
+    seekStep: 30,
+    resumeEnabled: true,
+    autoNextEnabled: true,
+    debugEnabled: false,
+    debugLogs: [],
+    lastSaveSecond: -1,
+    lastKnownGoodTime: 0,
+    lastHealAttemptTs: 0,
+    healRetryCount: 0,
+    lastAutoNextTriggerTs: 0,
+    nearEndTriggeredSig: '',
+    expectingSeamlessEpisode: false,
+    isSkippingAd: false,
+    lastDiskFlushTime: 0,
+    resumeDirty: false,
+    resumeCache: null,
+    cachedKeysVideo: null,
+    cachedKeysSrc: '',
+    cachedKeysList: null,
+    lastResumedSignature: '',
+    cachedTitle: '',
+    lastRawDocTitle: '',
+    currentEp: '',
+    bestVideoCache: null,
+    bestVideoCacheTs: 0,
+    bestVideoCacheRoot: null,
+    adWatchActive: false,
+    lastProgressUpdateTs: 0,
+    focusedEl: null,
+    lastKeyHandledTs: 0,
+    lastKeyHandledSig: ''
+  };
+
+  const origReqFS = typeof Element !== 'undefined' ? (
+    Element.prototype.requestFullscreen ||
+    Element.prototype.webkitRequestFullscreen ||
+    Element.prototype.mozRequestFullScreen
+  ) : null;
+
+  const isVideo = el =>
+    typeof HTMLVideoElement !== 'undefined' && (el instanceof HTMLVideoElement || el?.tagName === 'VIDEO');
+
+  const clamp = (n, min, max) => Math.max(min, Math.min(max, n));
+  const formatSpeed = val => `${Number(Number(val).toFixed(2))}x`;
+  const icon = name => `<svg viewBox="0 0 24 24" aria-hidden="true">${SVG[name] || ''}</svg>`;
+
+  /* =========================================================
+     0. ZERO-OVERHEAD VISUAL DEBUG CONSOLE & HYBRID STORAGE
+  ========================================================= */
+
+  function dbg(tag, msg) {
+    if (!state.debugEnabled) return;
+    const now = new Date();
+    const ts = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
+    const line = `[${ts}] [${tag}] ${msg}`;
+    state.debugLogs.push(line);
+    if (state.debugLogs.length > 20) state.debugLogs.shift();
+    renderDebugConsole();
+  }
+
+  function renderDebugConsole() {
+    const box = state.refs?.debugBox;
+    const body = state.refs?.debugBody;
+    const headTxt = state.refs?.debugHeadTxt;
+    if (!box) return;
+    if (!state.debugEnabled) {
+      box.classList.remove('active');
+      return;
+    }
+    box.classList.add('active');
+    const v = state.video;
+    const res = v ? `${v.videoWidth || 0}x${v.videoHeight || 0}` : 'no-vid';
+    const rate = v ? formatSpeed(v.playbackRate || 1) : '-';
+    const rs = v ? `RS:${v.readyState}` : '';
+    if (headTxt) {
+      headTxt.textContent = `OMNIFORGE V27.1-TV (${res} | ${rate} | ${rs})`;
+    }
+    if (body) {
+      body.textContent = state.debugLogs.join('\n');
+      body.scrollTop = body.scrollHeight;
+    }
+  }
+
+  const hasGMStorage = typeof GM_getValue === 'function' && typeof GM_setValue === 'function';
+
+  function readStorageJSON(key) {
+    let gmData = null;
+    let lsData = null;
+    if (hasGMStorage) {
+      try {
+        const raw = GM_getValue(key, null);
+        if (raw) gmData = typeof raw === 'string' ? JSON.parse(raw) : raw;
+      } catch (_) {}
+    }
+    try {
+      const rawLs = localStorage.getItem(key);
+      if (rawLs) lsData = JSON.parse(rawLs);
+    } catch (_) {}
+
+    if (gmData && lsData && key === CFG.resumeKey) {
+      const merged = { ...lsData };
+      for (const k of Object.keys(gmData)) {
+        if (!merged[k] || (gmData[k]?.u || 0) >= (merged[k]?.u || 0)) {
+          merged[k] = gmData[k];
+        }
+      }
+      return merged;
+    }
+    return gmData || lsData || null;
+  }
+
+  function writeStorageJSON(key, val) {
+    const serialized = JSON.stringify(val);
+    if (hasGMStorage) {
+      try { GM_setValue(key, serialized); } catch (_) {}
+    }
+    try { localStorage.setItem(key, serialized); } catch (_) {}
+  }
+
+  function loadPrefs() {
+    try {
+      const data = readStorageJSON(CFG.prefKey);
+      if (!data || typeof data !== 'object') return;
+
+      if (typeof data.aspectIndex === 'number' && Number.isFinite(data.aspectIndex)) {
+        state.aspectIndex = clamp(Math.round(data.aspectIndex), 0, ASPECT_MODES.length - 1);
+      }
+      if (typeof data.brightness === 'number' && Number.isFinite(data.brightness)) {
+        state.brightness = clamp(data.brightness, 0.25, 1.75);
+      }
+      if (typeof data.minSpeed === 'number' && Number.isFinite(data.minSpeed)) {
+        state.minSpeed = clamp(data.minSpeed, 0.1, 2);
+      }
+      if (typeof data.maxSpeed === 'number' && Number.isFinite(data.maxSpeed)) {
+        state.maxSpeed = clamp(data.maxSpeed, 1.5, 16);
+      }
+      if (state.minSpeed >= state.maxSpeed) {
+        state.minSpeed = 0.5;
+        state.maxSpeed = 2;
+      }
+      if (typeof data.seekStep === 'number' && Number.isFinite(data.seekStep)) {
+        state.seekStep = clamp(Math.round(data.seekStep), 5, 300);
+        CFG.seekStep = state.seekStep;
+      }
+      if (typeof data.resumeEnabled === 'boolean') state.resumeEnabled = data.resumeEnabled;
+      if (typeof data.autoNextEnabled === 'boolean') state.autoNextEnabled = data.autoNextEnabled;
+      if (typeof data.debugEnabled === 'boolean') state.debugEnabled = data.debugEnabled;
+
+      if (data._schema !== CFG.schemaVersion) {
+        savePrefs();
+      }
+    } catch (_) {}
+  }
+
+  function savePrefs() {
+    try {
+      writeStorageJSON(CFG.prefKey, {
+        _schema: CFG.schemaVersion,
+        aspectIndex: state.aspectIndex,
+        brightness: state.brightness,
+        minSpeed: state.minSpeed,
+        maxSpeed: state.maxSpeed,
+        seekStep: state.seekStep,
+        resumeEnabled: state.resumeEnabled,
+        autoNextEnabled: state.autoNextEnabled,
+        debugEnabled: state.debugEnabled
+      });
+    } catch (_) {}
+  }
+
+  function ensureResumeCache() {
+    if (state.resumeCache) return state.resumeCache;
+    try {
+      const data = readStorageJSON(CFG.resumeKey);
+      state.resumeCache = data && typeof data === 'object' ? data : {};
+    } catch (_) {
+      state.resumeCache = {};
+    }
+    return state.resumeCache;
+  }
+
+  function flushResumeCacheToDisk() {
+    if (!state.resumeDirty || !state.resumeCache) return;
+    state.resumeDirty = false;
+    state.lastDiskFlushTime = Date.now();
+    try {
+      const freshDisk = readStorageJSON(CFG.resumeKey);
+      const map = state.resumeCache;
+      if (freshDisk && typeof freshDisk === 'object') {
+        for (const k of Object.keys(freshDisk)) {
+          if (!map[k] || (freshDisk[k]?.u || 0) > (map[k]?.u || 0)) {
+            map[k] = freshDisk[k];
+          }
+        }
+      }
+      const allKeys = Object.keys(map);
+      if (allKeys.length > 90) {
+        allKeys.sort((a, b) => (map[a]?.u || 0) - (map[b]?.u || 0));
+        for (let i = 0; i < allKeys.length - 70; i++) delete map[allKeys[i]];
+      }
+      writeStorageJSON(CFG.resumeKey, map);
+    } catch (_) {}
+  }
+
+  function getVideoStorageKeys(video) {
+    const src = (video?.currentSrc || video?.src || '').split('?')[0];
+    const title = state.cachedTitle;
+    const ep = state.currentEp || '';
+    const cacheSig = `${title}|${ep}|${src}`;
+    if (state.cachedKeysVideo === video && state.cachedKeysSrc === cacheSig && state.cachedKeysList) {
+      return state.cachedKeysList;
+    }
+
+    const keys = [];
+    if (title && title.length > 2) keys.push(`t:${title}`);
+    try {
+      const topHref = window.top?.location?.href;
+      if (topHref) keys.push(`u:${topHref.split('#')[0]}|${ep}`);
+    } catch (_) {}
+    keys.push(`s:${location.host}${location.pathname}|${ep}|${src.slice(-65)}`);
+
+    state.cachedKeysVideo = video;
+    state.cachedKeysSrc = cacheSig;
+    state.cachedKeysList = keys;
+    return keys;
+  }
+
+  function getVideoSignature(video) {
+    if (!video) return '';
+    const title = state.cachedTitle || '';
+    const ep = state.currentEp || '';
+    const src = (video.currentSrc || video.src || '').split('?')[0].slice(-80);
+    const dur = Number.isFinite(video.duration) ? Math.round(video.duration) : 0;
+    return `${title}|${ep}|${src}|${dur}`;
+  }
+
+  function clearSavedPositionForVideo(video) {
+    if (!video) return;
+    try {
+      const keys = getVideoStorageKeys(video);
+      const map = ensureResumeCache();
+      let deleted = false;
+      for (let i = 0; i < keys.length; i++) {
+        if (map[keys[i]]) {
+          delete map[keys[i]];
+          deleted = true;
+        }
+      }
+      if (deleted) {
+        state.resumeDirty = true;
+        flushResumeCacheToDisk();
+      }
+    } catch (_) {}
+  }
+
+  function savePlaybackPosition(video, forceDiskFlush = false) {
+    if (!state.resumeEnabled || !video || state.seeking || state.isSkippingAd) return;
+    if (isDisqualifiedVideo(video) || isCurrentlyPlayingPreRollAd(video)) return;
+
+    const cur = video.currentTime;
+    const dur = video.duration;
+    if (!Number.isFinite(cur) || cur < 5) return;
+    if (!Number.isFinite(dur) || dur < CFG.minMainVideoDurationSec) return;
+
+    const sec = Math.floor(cur);
+    if (!forceDiskFlush && sec === state.lastSaveSecond) return;
+    if (!forceDiskFlush && sec % 4 !== 0) return;
+    state.lastSaveSecond = sec;
+
+    const keys = getVideoStorageKeys(video);
+    if (!keys.length) return;
+    const map = ensureResumeCache();
+    const now = Date.now();
+
+    if (cur > dur - 15) {
+      clearSavedPositionForVideo(video);
+      return;
+    }
+
+    for (let i = 0; i < keys.length; i++) {
+      map[keys[i]] = { t: sec, u: now };
+    }
+    state.resumeDirty = true;
+
+    if (forceDiskFlush || now - state.lastDiskFlushTime >= 18000) {
+      flushResumeCacheToDisk();
+    }
+  }
+
+  function tryRestorePlaybackPosition(video) {
+    if (!state.resumeEnabled || !video) return;
+
+    const applyRestore = () => {
+      if (!state.resumeEnabled || !video) return;
+      if (isDisqualifiedVideo(video) || isCurrentlyPlayingPreRollAd(video)) return;
+
+      const dur = video.duration;
+      if (!Number.isFinite(dur) || dur < CFG.minMainVideoDurationSec) return;
+
+      const sig = getVideoSignature(video);
+      if (sig && state.lastResumedSignature === sig) return;
+
+      try {
+        const keys = getVideoStorageKeys(video);
+        if (!keys.length) return;
+        const fresh = readStorageJSON(CFG.resumeKey);
+        const map = fresh && typeof fresh === 'object' ? (state.resumeCache = fresh) : ensureResumeCache();
+
+        let entry = null;
+        for (let i = 0; i < keys.length; i++) {
+          if (map[keys[i]] && typeof map[keys[i]].t === 'number') {
+            entry = map[keys[i]];
+            break;
+          }
+        }
+        if (!entry) return;
+
+        state.lastResumedSignature = sig;
+        if (entry.t >= 5 && entry.t < dur - 15 && video.currentTime < 12 && Math.abs(video.currentTime - entry.t) > 4) {
+          safeSeek(video, entry.t, false);
+          dbg('RESUME', `Restored to ${formatTime(entry.t)}`);
+          setTimeout(() => {
+            showHud(`รับชมต่อจาก ${formatTime(entry.t)}`, 2200, 'history');
+          }, 180);
+        }
+      } catch (_) {}
+    };
+
+    if (video.readyState >= 1 && Number.isFinite(video.duration) && video.duration > 0) {
+      applyRestore();
+    } else {
+      video.addEventListener('loadedmetadata', applyRestore, { once: true });
+    }
+  }
+
+  function escapeHtml(value) {
+    if (!value) return '';
+    return String(value)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
+  }
+
+  function formatTime(value) {
+    if (!Number.isFinite(value) || value < 0) return '00:00';
+    const n = Math.floor(value);
+    const h = Math.floor(n / 3600);
+    const m = Math.floor((n % 3600) / 60);
+    const s = n % 60;
+    return h
+      ? `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+      : `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+  }
+
+  /* =========================================================
+     1. TRUE TOP-LEVEL HARDWARE FULLSCREEN BRIDGE & LIVE DOM SYNC
+  ========================================================= */
+
+  function cleanTitle(raw) {
+    if (!raw) return '';
+    return String(raw)
+      .replace(RX.whitespace, ' ')
+      .replace(RX.siteSuffix, '')
+      .replace(RX.thaiSuffix, '')
+      .replace(RX.thaiPrefix, '')
+      .replace(RX.epSuffix, '')
+      .trim();
+  }
+
+  function normalizeEpNumber(numStr) {
+    const n = Number(numStr);
+    if (!Number.isFinite(n) || n <= 0 || n > 4000) return '';
+    if (n === 240 || n === 360 || n === 480 || n === 720 || n === 1080 || n === 1440 || n === 2160) return '';
+    return `EP ${String(numStr).replace(/^0+(?=\d)/, '')}`;
+  }
+
+  function getNumericEp(epBadge) {
+    if (!epBadge) return NaN;
+    const m = String(epBadge).match(/(\d+(?:\.\d+)?)/);
+    return m ? Number(m[1]) : NaN;
+  }
+
+  function parseEpBadge(text, allowBareNumber = false) {
+    if (!text) return '';
+    const str = String(text).replace(RX.whitespace, ' ').trim();
+    if (!str || str.length > 160) return '';
+    if (RX.resolutionGuard.test(str) || RX.serverGuard.test(str)) return '';
+
+    const fracMatch = str.match(RX.epFraction);
+    if (fracMatch) return normalizeEpNumber(fracMatch[1]);
+
+    const rangeMatch = str.match(RX.epRange);
+    if (rangeMatch && rangeMatch[1] !== rangeMatch[2]) return '';
+
+    const explicit = str.match(RX.epExplicit);
+    if (explicit) return normalizeEpNumber(explicit[1]);
+
+    if (allowBareNumber) {
+      const numOnly = str.match(RX.epNumOnly);
+      if (numOnly) return normalizeEpNumber(numOnly[1]);
+
+      const bracket = str.match(RX.epBracket);
+      if (bracket) return normalizeEpNumber(bracket[1]);
+    }
+    return '';
+  }
+
+  function extractEpFromUrl(urlStr) {
+    if (!urlStr) return '';
+    try {
+      const decoded = decodeURIComponent(String(urlStr));
+      const qMatch = decoded.match(RX.epUrlQuery);
+      if (qMatch) {
+        const res = normalizeEpNumber(qMatch[1]);
+        if (res) return res;
+      }
+      const pMatch = decoded.match(RX.epUrl);
+      if (pMatch) {
+        const res = normalizeEpNumber(pMatch[1]);
+        if (res) return res;
+      }
+      const thaiUrlMatch = decoded.match(/(?:ตอน(?:ที่)?|ep)[-_\s]*0*(\d{1,4})(?!\s*[-–—~ถึง]\s*\d|\d)/i);
+      if (thaiUrlMatch) {
+        const res = normalizeEpNumber(thaiUrlMatch[1]);
+        if (res) return res;
+      }
+    } catch (_) {}
+    return '';
+  }
+
+  function extractEpFromElement(el) {
+    if (!el || !(el instanceof Element)) return '';
+
+    const attrNames = ['data-ep', 'data-episode', 'data-num', 'data-number', 'data-index', 'data-part', 'data-id', 'data-episode-id', 'data-chap'];
+    for (let i = 0; i < attrNames.length; i++) {
+      const val = el.getAttribute(attrNames[i]);
+      if (val) {
+        const ep = parseEpBadge(val, true);
+        if (ep) return ep;
+      }
+    }
+
+    const inEpContainer = Boolean(el.closest(EP_CONTAINER_SEL));
+    const txt = (el.textContent || '').replace(RX.whitespace, ' ').trim();
+    const isEpisodeClass = el.classList.contains('episode') || /\bepisode\b/i.test(el.className || '');
+
+    if (txt && txt.length <= 120) {
+      const epFromTxt = parseEpBadge(txt, inEpContainer || isEpisodeClass || /ตอน(?:ที่)?\s*\d+/i.test(txt));
+      if (epFromTxt) return epFromTxt;
+    }
+
+    const titleAttr = el.getAttribute('title') || el.getAttribute('aria-label') || '';
+    if (titleAttr) {
+      const epFromTitle = parseEpBadge(titleAttr, inEpContainer);
+      if (epFromTitle) return epFromTitle;
+    }
+
+    const href = el.getAttribute('href') || el.getAttribute('data-href') || el.getAttribute('data-url') || '';
+    if (href && href !== '#' && !href.startsWith('javascript:')) {
+      const epFromHref = extractEpFromUrl(href);
+      if (epFromHref) return epFromHref;
+    }
+    return '';
+  }
+
+  function detectActiveEpFromDOM(doc = document) {
+    if (!doc) return '';
+    try {
+      const activePrioritySelectors = [
+        '.cyber-ep-btn.active', 'button.cyber-ep-btn.active', '[data-ep].active', 'button[data-ep].active',
+        '[class*="cyber-ep"].active',
+        '[class*="episode-list-bg-active"]',
+        '[class*="ep-list-bg-active"]',
+        '.episode.active', '.episode.current', '.episode.playing', '.episode.selected',
+        '.ep-item.active', '.episode-item.active', '.halim-episode.active',
+        '.les-content a.active', '.episodelist a.active', '.ep-list a.active',
+        '.play-list a.active', '.halim-list-eps a.active', '.b-list a.active',
+        '[class*="ep-"][class*="active"]', '[class*="episode"][class*="active"]',
+        '[class*="ep-"][class*="current"]', '[class*="episode"][class*="current"]',
+        '[aria-current="page"]', '[aria-current="true"]', '[aria-selected="true"]',
+        'button.active', 'a.active', 'li.active'
+      ];
+      for (let s = 0; s < activePrioritySelectors.length; s++) {
+        const nodes = doc.querySelectorAll(activePrioritySelectors[s]);
+        for (let i = 0; i < nodes.length; i++) {
+          const el = nodes[i];
+          if (el.children.length > 6) continue;
+          const ep = extractEpFromElement(el);
+          if (ep) return ep;
+        }
+      }
+
+      const allEps = doc.querySelectorAll('.episode, span.episode, div.episode, [class*="episode-item"], [class*="ep-item"]');
+      if (allEps.length >= 2) {
+        let bestEl = null;
+        let bestScore = -1;
+        for (let i = 0; i < allEps.length; i++) {
+          const el = allEps[i];
+          if (el.children.length > 6) continue;
+          const ep = extractEpFromElement(el);
+          if (!ep) continue;
+          let score = 0;
+          const cls = (el.className || '').toString().toLowerCase();
+          if (cls.includes('active') || cls.includes('current') || cls.includes('playing') || cls.includes('selected')) score += 100;
+          if (cls.includes('bg-active') || cls.includes('list-bg-active')) score += 120;
+          try {
+            const st = doc.defaultView?.getComputedStyle?.(el);
+            if (st) {
+              const bg = (st.backgroundColor || '').toLowerCase();
+              if (bg.includes('rgb') && !bg.includes('0, 0, 0') && !bg.includes('255, 255, 255')) {
+                const m = bg.match(/rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/);
+                if (m) {
+                  const r = +m[1], g = +m[2], b = +m[3];
+                  if (r > 180 && g < 120 && b > 80) score += 80;
+                  if (g > 150 && r < 100) score += 40;
+                }
+              }
+              if (st.fontWeight === 'bold' || parseInt(st.fontWeight, 10) >= 600) score += 15;
+            }
+          } catch (_) {}
+          if (score > bestScore) {
+            bestScore = score;
+            bestEl = el;
+          }
+        }
+        if (bestEl && bestScore >= 40) {
+          const ep = extractEpFromElement(bestEl);
+          if (ep) return ep;
+        }
+      }
+
+      const selects = doc.querySelectorAll('select');
+      for (let i = 0; i < selects.length; i++) {
+        const opt = selects[i].selectedOptions?.[0];
+        if (opt) {
+          const ep = parseEpBadge(opt.textContent || '', true) || parseEpBadge(opt.value || '', false);
+          if (ep) return ep;
+        }
+      }
+
+      const urlEp = extractEpFromUrl(doc.location?.href || '');
+      if (urlEp) return urlEp;
+
+      const rawTitle = doc.title || '';
+      const looksLikeRange = /EP\.\s*\d+\s*[-–—~ถึง]|ตอนล่าสุด|EP\.\d+-\d+/i.test(rawTitle);
+      if (!looksLikeRange) {
+        const titleEp = parseEpBadge(rawTitle, false);
+        if (titleEp) return titleEp;
+      }
+      const h1 = doc.querySelector('h1.entry-title, h1.video-title, h1.title, h1');
+      if (h1) {
+        const h1Ep = parseEpBadge(h1.textContent || '', false);
+        if (h1Ep) return h1Ep;
+      }
+    } catch (_) {}
+    return '';
+  }
+
+  function extractBaseTitleFromDoc(doc) {
+    if (!doc) return '';
+    try {
+      const rawTitle = doc.title || '';
+      const cleanedDocTitle = cleanTitle(rawTitle);
+
+      const h1El = doc.querySelector('h1.entry-title, h1.video-title, h1.title, .film-name, h1');
+      const rawH1 = (h1El && h1El.textContent) || '';
+      const cleanedH1 = cleanTitle(rawH1);
+
+      if (cleanedDocTitle) return cleanedDocTitle;
+      if (cleanedH1 && cleanedH1.length < 150) return cleanedH1;
+
+      const meta = doc.querySelector(
+        'meta[property="og:title"], meta[name="twitter:title"], meta[property="video:title"], meta[name="title"]'
+      );
+      if (meta) {
+        const content = meta.getAttribute('content') || '';
+        if (content && content.trim()) return cleanTitle(content);
+      }
+    } catch (_) {}
+    return '';
+  }
+
+  function stripEpFromTitleText(text) {
+    if (!text) return '';
+    return String(text)
+      .replace(/^(?:EP\.?|Episode|ตอน(?:ที่)?)\s*\d+(?:\.\d+)?\s*[-–—|:•]?\s*/i, '')
+      .replace(/\s*[-–—|:•]\s*(?:EP\.?|Episode|ตอน(?:ที่)?)\s*\d+(?:\.\d+)?.*$/i, '')
+      .replace(/\s*(?:EP\.?|Episode|ตอน(?:ที่)?)\s*\d+(?:\.\d+)?\s*$/i, '')
+      .trim();
+  }
+
+  function composeFullTitle(baseTitle, epBadge) {
+    const base = (baseTitle || '').trim();
+    const ep = (epBadge || '').trim();
+    if (!base) return ep;
+    if (!ep) return base;
+    const cleanedBase = stripEpFromTitleText(base) || base;
+    const escapedEp = ep.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    if (new RegExp(`^${escapedEp}\\b`, 'i').test(cleanedBase)) {
+      return cleanedBase;
+    }
+    return `${ep} - ${cleanedBase}`;
+  }
+
+  function setTitleUI(fullOrBase, epOverride) {
+    const el = state.refs?.title;
+    if (!el) return;
+    const ep = String(epOverride || state.currentEp || '').trim();
+    let base = stripEpFromTitleText(fullOrBase || state.cachedTitle || '');
+    if (!base && fullOrBase) base = stripEpFromTitleText(String(fullOrBase));
+    if (ep) {
+      el.innerHTML = `<span class="v271-ep">${escapeHtml(ep)}</span><span class="v271-title-main">${escapeHtml(base)}</span>`;
+    } else {
+      el.textContent = base || String(fullOrBase || '');
+    }
+  }
+
+  function extractFullTitleFromDoc(doc) {
+    const base = extractBaseTitleFromDoc(doc);
+    let detected = '';
+    if (!state.expectingSeamlessEpisode || !state.currentEp) {
+      detected = detectActiveEpFromDOM(doc);
+      if (detected) state.currentEp = detected;
+    } else {
+      detected = detectActiveEpFromDOM(doc);
+      if (detected && detected !== state.currentEp) {
+        const oldN = getNumericEp(state.currentEp);
+        const newN = getNumericEp(detected);
+        if (!Number.isFinite(oldN) || (Number.isFinite(newN) && Math.abs(newN - oldN) <= 3 && newN >= oldN)) {
+          state.currentEp = detected;
+        }
+      }
+    }
+    const ep = state.currentEp || detected;
+    return composeFullTitle(base, ep);
+  }
+
+  function broadcastTitleToFrames(fullTitle, epBadge = state.currentEp) {
+    if (!fullTitle) return;
+    try {
+      const frames = document.querySelectorAll('iframe');
+      for (let i = 0; i < frames.length; i++) {
+        frames[i].contentWindow?.postMessage({
+          type: CFG.titleType + ':res',
+          title: fullTitle,
+          ep: epBadge || ''
+        }, '*');
+      }
+    } catch (_) {}
+  }
+
+  function refreshTitleCache(forceDOMScan = false) {
+    if (window === window.top) {
+      const rawNow = document.title || '';
+      if (!forceDOMScan && state.cachedTitle && rawNow === state.lastRawDocTitle) {
+        return state.cachedTitle;
+      }
+      state.lastRawDocTitle = rawNow;
+      const detectedEp = detectActiveEpFromDOM(document);
+      if (detectedEp) {
+        if (detectedEp !== state.currentEp) {
+          dbg('EP-SYNC', `Title refresh synced ${state.currentEp} → ${detectedEp}`);
+        }
+        state.currentEp = detectedEp;
+      }
+      const full = extractFullTitleFromDoc(document).slice(0, 220);
+      if (full) {
+        state.cachedTitle = full;
+        state.cachedKeysList = null;
+        setTitleUI(full, state.currentEp);
+      }
+      return state.cachedTitle;
+    }
+
+    try {
+      if (window.top?.document) {
+        const rawTop = window.top.document.title || '';
+        if (!forceDOMScan && state.cachedTitle && rawTop === state.lastRawDocTitle) {
+          return state.cachedTitle;
+        }
+        state.lastRawDocTitle = rawTop;
+        const topTitle = extractFullTitleFromDoc(window.top.document).slice(0, 220);
+        if (topTitle) {
+          state.cachedTitle = topTitle;
+          state.cachedKeysList = null;
+          setTitleUI(topTitle, state.currentEp);
+          return topTitle;
+        }
+      }
+    } catch (_) {}
+
+    if (!state.cachedTitle || forceDOMScan) {
+      const local = extractFullTitleFromDoc(document).slice(0, 220);
+      if (local) state.cachedTitle = local;
+      try {
+        window.top.postMessage({ type: CFG.titleType + ':req' }, '*');
+      } catch (_) {}
+    }
+    return state.cachedTitle;
+  }
+
+  function findMainPlayerIframeInTopDoc(doc = document) {
+    const playerZones = doc.querySelectorAll(PLAYER_AREA_SEL);
+    for (let i = 0; i < playerZones.length; i++) {
+      const f = playerZones[i].querySelector('iframe[src], iframe[data-src], iframe[data-lazy-src]');
+      if (f) {
+        const src = f.getAttribute('src') || f.getAttribute('data-src') || '';
+        if (!RX.adBannerHint.test(src)) return f;
+      }
+    }
+    let bestF = null;
+    let bestA = 0;
+    const allFrames = doc.querySelectorAll('iframe');
+    for (let i = 0; i < allFrames.length; i++) {
+      const f = allFrames[i];
+      const src = f.getAttribute('src') || f.getAttribute('data-src') || '';
+      if (!src || RX.adBannerHint.test(src) || /facebook|twitter|doubleclick|googlesyndication/i.test(src)) continue;
+      const r = f.getBoundingClientRect();
+      const a = r.width * r.height;
+      if (r.width >= 200 && r.height >= 120 && a > bestA) {
+        bestA = a;
+        bestF = f;
+      }
+    }
+    return bestF;
+  }
+
+  function setTopWindowIframeFullscreenLock(enable) {
+    if (window !== window.top) {
+      try {
+        window.top.postMessage({ type: 'tmv271_parent_fs_lock', enable: Boolean(enable) }, '*');
+      } catch (_) {}
+      return;
+    }
+
+    installHostStyles(document);
+    if (enable) {
+      const iframe = findMainPlayerIframeInTopDoc(document);
+      if (!iframe) return;
+      iframe.setAttribute(CFG.parentIframeFsAttr, '1');
+      const wrap = iframe.closest(PLAYER_AREA_SEL) || iframe.parentElement;
+      if (wrap && wrap !== document.body && wrap !== document.documentElement) {
+        wrap.setAttribute(CFG.parentWrapFsAttr, '1');
+      }
+      document.documentElement.setAttribute(CFG.lockScrollAttr, '1');
+      try { iframe.focus(); } catch (_) {}
+    } else {
+      const lockedFrames = document.querySelectorAll(`[${CFG.parentIframeFsAttr}]`);
+      for (let i = 0; i < lockedFrames.length; i++) {
+        lockedFrames[i].removeAttribute(CFG.parentIframeFsAttr);
+      }
+      const lockedWraps = document.querySelectorAll(`[${CFG.parentWrapFsAttr}]`);
+      for (let i = 0; i < lockedWraps.length; i++) {
+        lockedWraps[i].removeAttribute(CFG.parentWrapFsAttr);
+      }
+      if (!state.pseudoFullscreen) {
+        document.documentElement.removeAttribute(CFG.lockScrollAttr);
+      }
+    }
+  }
+
+  function synthesizeNextUrlPattern(currentHref, targetNum) {
+    if (!currentHref) return '';
+    try {
+      const url = new URL(currentHref, location.href);
+      const pathname = url.pathname;
+
+      const epSlugMatch = pathname.match(/(-|_)(?:ep|episode|e|ton|part)[-_]?(\d+)/i);
+      if (epSlugMatch) {
+        const prefix = epSlugMatch[1];
+        const keyword = epSlugMatch[0].match(/(?:ep|episode|e|ton|part)/i)[0];
+        const newPath = pathname.replace(epSlugMatch[0], `${prefix}${keyword}${targetNum}`);
+        url.pathname = newPath;
+        return url.href;
+      }
+
+      for (const key of url.searchParams.keys()) {
+        if (/^(?:ep|episode|part|id_ep)$/i.test(key)) {
+          url.searchParams.set(key, String(targetNum));
+          return url.href;
+        }
+      }
+
+      const trailingNumMatch = pathname.match(/\/(\d+)(?:\/?$|\.html?|\/)/);
+      if (trailingNumMatch) {
+        const oldNumStr = trailingNumMatch[1];
+        const newPath = pathname.replace(new RegExp(`/${oldNumStr}(?=/|$|\\.html?)`), `/${targetNum}`);
+        if (newPath !== pathname) {
+          url.pathname = newPath;
+          return url.href;
+        }
+      }
+    } catch (_) {}
+    return '';
+  }
+
+  function updateLiveDOMNavigationButtons(targetNum, nextEpBadge) {
+    if (window !== window.top) return;
+    try {
+      const epButtons = document.querySelectorAll('a, button, [role="button"]');
+      for (let i = 0; i < epButtons.length; i++) {
+        const el = epButtons[i];
+        const txt = (el.textContent || '').replace(RX.whitespace, ' ').trim();
+        const ep = extractEpFromElement(el);
+        const n = getNumericEp(ep);
+
+        if (n === targetNum || RX.nextKeyword.test(txt)) {
+          el.classList.add('active', 'current');
+          el.setAttribute('aria-current', 'page');
+        } else if (n && n !== targetNum) {
+          el.classList.remove('active', 'current');
+          el.removeAttribute('aria-current');
+        }
+      }
+
+      const h1s = document.querySelectorAll('h1.entry-title, h1.video-title, h1.title, h1');
+      for (let i = 0; i < h1s.length; i++) {
+        const h1 = h1s[i];
+        const base = cleanTitle(h1.textContent);
+        if (base) {
+          h1.textContent = composeFullTitle(base, nextEpBadge);
+        }
+      }
+    } catch (_) {}
+  }
+
+  function findNextEpisodeTarget(doc = document, currentEpStr = '') {
+    const liveDetected = detectActiveEpFromDOM(doc);
+    const curEpBadge = liveDetected || currentEpStr || state.currentEp || '';
+    if (liveDetected && liveDetected !== state.currentEp) {
+      state.currentEp = liveDetected;
+      dbg('EP-SYNC', `Synced currentEp from DOM → ${liveDetected}`);
+    }
+    const curNum = getNumericEp(curEpBadge);
+    const targetNum = Number.isFinite(curNum) ? curNum + 1 : NaN;
+
+    try {
+      const dataEpBtns = Array.from(doc.querySelectorAll('[data-ep], .cyber-ep-btn, button[data-ep]'));
+      const confident = [];
+      for (let i = 0; i < dataEpBtns.length; i++) {
+        const el = dataEpBtns[i];
+        const raw = el.getAttribute('data-ep') || el.getAttribute('data-episode') || '';
+        let n = Number(raw);
+        if (!Number.isFinite(n) || n <= 0) {
+          const ep = extractEpFromElement(el);
+          n = getNumericEp(ep);
+        }
+        if (!Number.isFinite(n) || n <= 0 || n > 5000) continue;
+        if (RX.resolutionGuard.test(String(n))) continue;
+        let score = 50;
+        const cls = (el.className || '').toString().toLowerCase();
+        if (cls.includes('cyber-ep-btn')) score += 80;
+        if (cls.includes('active') || cls.includes('current')) score += 40;
+        if (el.closest('.cyber-ep-grid, .cyber-ep-wrapper, [class*="ep-grid"], [class*="episode-list"]')) score += 30;
+        if (el.tagName === 'BUTTON' || el.tagName === 'A') score += 15;
+        confident.push({ el, n, score, ep: normalizeEpNumber(n) });
+      }
+      if (confident.length >= 2) {
+        confident.sort((a, b) => a.n - b.n || b.score - a.score);
+        if (Number.isFinite(targetNum)) {
+          let best = null, bestScore = -1;
+          for (const c of confident) {
+            if (c.n === targetNum && c.score > bestScore) {
+              best = c; bestScore = c.score;
+            }
+          }
+          if (best) {
+            const clickEl = best.el.querySelector('a, button') || best.el;
+            return {
+              type: 'element',
+              element: clickEl,
+              href: clickEl.getAttribute?.('href') || best.el.getAttribute?.('href') || '',
+              dataSrc: best.el.getAttribute('data-src') || clickEl.getAttribute?.('data-src') || '',
+              ep: best.ep,
+              targetNum: best.n
+            };
+          }
+        }
+        if (Number.isFinite(curNum)) {
+          let curIdx = -1, bestCur = -1;
+          for (let i = 0; i < confident.length; i++) {
+            if (confident[i].n === curNum && confident[i].score > bestCur) {
+              bestCur = confident[i].score;
+              curIdx = i;
+            }
+          }
+          if (curIdx >= 0) {
+            for (let i = curIdx + 1; i < confident.length; i++) {
+              if (confident[i].n > curNum) {
+                const next = confident[i];
+                const clickEl = next.el.querySelector('a, button') || next.el;
+                return {
+                  type: 'element',
+                  element: clickEl,
+                  href: clickEl.getAttribute?.('href') || next.el.getAttribute?.('href') || '',
+                  dataSrc: next.el.getAttribute('data-src') || clickEl.getAttribute?.('data-src') || '',
+                  ep: next.ep,
+                  targetNum: next.n
+                };
+              }
+            }
+          }
+          for (const c of confident) {
+            if (c.n > curNum) {
+              const clickEl = c.el.querySelector('a, button') || c.el;
+              return {
+                type: 'element',
+                element: clickEl,
+                href: clickEl.getAttribute?.('href') || c.el.getAttribute?.('href') || '',
+                dataSrc: c.el.getAttribute('data-src') || clickEl.getAttribute?.('data-src') || '',
+                ep: c.ep,
+                targetNum: c.n
+              };
+            }
+          }
+        }
+      }
+    } catch (_) {}
+
+    const selects = doc.querySelectorAll('select');
+    for (let i = 0; i < selects.length; i++) {
+      const sel = selects[i];
+      const opts = Array.from(sel.options || []);
+      if (opts.length < 2) continue;
+
+      if (Number.isFinite(targetNum)) {
+        for (let j = 0; j < opts.length; j++) {
+          const ep = parseEpBadge(opts[j].textContent || '', true) || parseEpBadge(opts[j].value || '', false);
+          if (getNumericEp(ep) === targetNum) {
+            return { type: 'select', select: sel, option: opts[j], ep: normalizeEpNumber(targetNum), targetNum };
+          }
+        }
+      }
+
+      const idx = sel.selectedIndex;
+      if (idx >= 0 && idx + 1 < opts.length) {
+        const nextOpt = opts[idx + 1];
+        const nextEp = parseEpBadge(nextOpt.textContent || '', true) || parseEpBadge(nextOpt.value || '', false);
+        if (nextEp) {
+          return { type: 'select', select: sel, option: nextOpt, ep: nextEp, targetNum: getNumericEp(nextEp) };
+        }
+      }
+    }
+
+    const candidates = doc.querySelectorAll(
+      'a, button, li[onclick], [role="button"], [data-ep], [data-episode], ' +
+      '.ep-item, .episode-item, .halim-episode, .episode, span.episode, div.episode, ' +
+      '[class*="episode"], [class*="ep-item"], [class*="ep_item"], [class*="eps-"]'
+    );
+
+    const epElements = [];
+    for (let i = 0; i < candidates.length; i++) {
+      const el = candidates[i];
+      if (el.children.length > 6) continue;
+      const txt = (el.textContent || '').replace(RX.whitespace, ' ').trim();
+      if (txt.length > 80) continue;
+
+      let ep = extractEpFromElement(el);
+      if (!ep && /ตอน(?:ที่)?\s*\d+/i.test(txt)) {
+        ep = parseEpBadge(txt, true);
+      }
+      if (!ep) continue;
+      const n = getNumericEp(ep);
+      if (!Number.isFinite(n) || n <= 0) continue;
+
+      let score = 10;
+      if (el.classList.contains('episode') || /\bepisode\b/i.test(el.className || '')) score += 40;
+      if ((el.className || '').toString().toLowerCase().includes('cyber-ep-btn')) score += 70;
+      if (el.hasAttribute('data-ep') || el.hasAttribute('data-episode')) score += 50;
+      if (el.closest(EP_CONTAINER_SEL) || el.closest('.cyber-ep-grid, .cyber-ep-wrapper')) score += 30;
+      if (el.tagName === 'A' || el.tagName === 'BUTTON') score += 15;
+      const href = el.getAttribute('href') || '';
+      if (href && href !== '#' && !href.startsWith('javascript:')) score += 20;
+      try {
+        const r = el.getBoundingClientRect();
+        if (r.width > 0 && r.height > 0) score += 10;
+      } catch (_) {}
+
+      epElements.push({ el, ep, n, score, txt });
+    }
+
+    epElements.sort((a, b) => a.n - b.n || b.score - a.score);
+
+    if (Number.isFinite(targetNum)) {
+      let bestMatch = null;
+      let bestScore = -1;
+      for (let i = 0; i < epElements.length; i++) {
+        if (epElements[i].n === targetNum && epElements[i].score > bestScore) {
+          bestScore = epElements[i].score;
+          bestMatch = epElements[i];
+        }
+      }
+      if (bestMatch) {
+        const clickEl = bestMatch.el.querySelector('a, button') || bestMatch.el;
+        return {
+          type: 'element',
+          element: clickEl,
+          href: clickEl.getAttribute?.('href') || bestMatch.el.getAttribute?.('href') || '',
+          ep: normalizeEpNumber(targetNum),
+          targetNum
+        };
+      }
+    }
+
+    if (Number.isFinite(curNum) && epElements.length >= 2) {
+      let currentIdx = -1;
+      let bestCurScore = -1;
+      for (let i = 0; i < epElements.length; i++) {
+        if (epElements[i].n === curNum && epElements[i].score > bestCurScore) {
+          bestCurScore = epElements[i].score;
+          currentIdx = i;
+        }
+      }
+      if (currentIdx >= 0) {
+        for (let j = currentIdx + 1; j < epElements.length; j++) {
+          if (epElements[j].n > curNum) {
+            const next = epElements[j];
+            const clickEl = next.el.querySelector('a, button') || next.el;
+            return {
+              type: 'element',
+              element: clickEl,
+              href: clickEl.getAttribute?.('href') || next.el.getAttribute?.('href') || '',
+              ep: next.ep,
+              targetNum: next.n
+            };
+          }
+        }
+      }
+      for (let i = 0; i < epElements.length; i++) {
+        if (epElements[i].n > curNum) {
+          const next = epElements[i];
+          const clickEl = next.el.querySelector('a, button') || next.el;
+          return {
+            type: 'element',
+            element: clickEl,
+            href: clickEl.getAttribute?.('href') || next.el.getAttribute?.('href') || '',
+            ep: next.ep,
+            targetNum: next.n
+          };
+        }
+      }
+    }
+
+    if (Number.isFinite(targetNum)) {
+      const synthesizedUrl = synthesizeNextUrlPattern(location.href, targetNum);
+      if (synthesizedUrl) {
+        return {
+          type: 'url_fallback',
+          href: synthesizedUrl,
+          ep: normalizeEpNumber(targetNum),
+          targetNum
+        };
+      }
+    }
+
+    for (let i = 0; i < candidates.length; i++) {
+      const el = candidates[i];
+      if (el.children.length > 4) continue;
+      const txt = (el.textContent || '').replace(RX.whitespace, ' ').trim();
+      if (txt.length <= 40 && RX.nextKeyword.test(txt)) {
+        const ep = extractEpFromElement(el) || (Number.isFinite(targetNum) ? normalizeEpNumber(targetNum) : 'ตอนถัดไป');
+        return {
+          type: 'element',
+          element: el,
+          href: el.getAttribute?.('href') || '',
+          ep,
+          targetNum: getNumericEp(ep) || targetNum
+        };
+      }
+    }
+    return null;
+  }
+
+  function saveAutoFullscreenBridge(epBadge) {
+    const payload = {
+      ep: epBadge || '',
+      speed: state.savedSpeed || 1,
+      aspectIndex: state.aspectIndex || 0,
+      brightness: state.brightness || 1,
+      ts: Date.now()
+    };
+    writeStorageJSON(CFG.autoFsBridgeKey, payload);
+    try { sessionStorage.setItem(CFG.autoFsBridgeKey, JSON.stringify(payload)); } catch (_) {}
+  }
+
+  function consumeAutoFullscreenBridge() {
+    let data = readStorageJSON(CFG.autoFsBridgeKey);
+    if (!data) {
+      try {
+        const raw = sessionStorage.getItem(CFG.autoFsBridgeKey);
+        if (raw) data = JSON.parse(raw);
+      } catch (_) {}
+    }
+    if (!data || typeof data.ts !== 'number') return null;
+    if (Date.now() - data.ts > 20000) {
+      clearAutoFullscreenBridge();
+      return null;
+    }
+    return data;
+  }
+
+  function clearAutoFullscreenBridge() {
+    writeStorageJSON(CFG.autoFsBridgeKey, null);
+    try { sessionStorage.removeItem(CFG.autoFsBridgeKey); } catch (_) {}
+  }
+
+  async function tryAjaxSwapEpisodeInPlace(targetUrl, nextEpBadge, targetNum) {
+    if (!targetUrl || targetUrl === '#' || targetUrl.startsWith('javascript:')) return false;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), CFG.ajaxTimeoutMs);
+    try {
+      const absUrl = new URL(targetUrl, location.href).href;
+      if (absUrl === location.href) return false;
+
+      dbg('AJAX-EP', `Fetching ${nextEpBadge}: ${absUrl.slice(0, 70)}`);
+      const res = await fetch(absUrl, {
+        method: 'GET',
+        credentials: 'include',
+        headers: { 'Accept': 'text/html,application/xhtml+xml' },
+        signal: controller.signal
+      });
+      clearTimeout(timeoutId);
+      if (!res.ok) return false;
+
+      const html = await res.text();
+      if (!html || html.length < 300) return false;
+
+      const parser = new DOMParser();
+      const nextDoc = parser.parseFromString(html, 'text/html');
+      if (!nextDoc) return false;
+
+      const nextIframe = findMainPlayerIframeInTopDoc(nextDoc);
+      const curIframe = findMainPlayerIframeInTopDoc(document);
+
+      if (nextIframe && curIframe) {
+        const rawNextSrc = nextIframe.getAttribute('src') || nextIframe.getAttribute('data-src') || nextIframe.getAttribute('data-lazy-src') || '';
+        if (rawNextSrc) {
+          const nextIframeUrl = new URL(rawNextSrc, absUrl).href;
+          dbg('AJAX-EP', `Swapping iframe -> ${nextIframeUrl.slice(0, 60)}`);
+
+          try { history.pushState({ ep: nextEpBadge }, nextDoc.title || document.title, absUrl); } catch (_) {}
+          if (nextDoc.title) document.title = nextDoc.title;
+
+          state.currentEp = nextEpBadge;
+          const updatedTitle = refreshTitleCache(true);
+
+          updateLiveDOMNavigationButtons(targetNum, nextEpBadge);
+          setTopWindowIframeFullscreenLock(true);
+          curIframe.src = nextIframeUrl;
+
+          setTimeout(() => {
+            broadcastTitleToFrames(updatedTitle, nextEpBadge);
+            pingAllFramesAutoPlayAndFullscreen(nextEpBadge);
+          }, 550);
+          return true;
+        }
+      }
+    } catch (err) {
+      if (err?.name !== 'AbortError') {
+        dbg('AJAX-ERR', String(err?.message || err));
+      }
+    } finally {
+      clearTimeout(timeoutId);
+    }
+    return false;
+  }
+
+  function pingAllFramesAutoPlayAndFullscreen(epBadge) {
+    try {
+      const frames = document.querySelectorAll('iframe');
+      for (let i = 0; i < frames.length; i++) {
+        frames[i].contentWindow?.postMessage({
+          type: 'tmv271_seamless_start',
+          ep: epBadge || state.currentEp || '',
+          title: state.cachedTitle || '',
+          speed: state.savedSpeed || 1
+        }, '*');
+      }
+    } catch (_) {}
+  }
+
+  function startSeamlessEpisodeRecovery(nextEpBadge) {
+    if (state.autoPlayPollTimer) {
+      clearInterval(state.autoPlayPollTimer);
+      state.autoPlayPollTimer = 0;
+    }
+    state.expectingSeamlessEpisode = true;
+    if (nextEpBadge) state.currentEp = nextEpBadge;
+
+    try {
+      const base = stripEpFromTitleText(state.cachedTitle || '')
+        || extractBaseTitleFromDoc(document) || '';
+      const forced = composeFullTitle(base, state.currentEp);
+      if (forced) {
+        state.cachedTitle = forced;
+        state.cachedKeysList = null;
+        setTitleUI(forced, state.currentEp);
+        broadcastTitleToFrames(forced, state.currentEp);
+      }
+    } catch (_) {}
+
+    saveAutoFullscreenBridge(nextEpBadge || state.currentEp);
+    setTopWindowIframeFullscreenLock(true);
+
+    let attempts = 0;
+    const maxAttempts = 40;
+
+    state.autoPlayPollTimer = setInterval(() => {
+      attempts++;
+      if (attempts > maxAttempts || state.destroyed) {
+        clearInterval(state.autoPlayPollTimer);
+        state.autoPlayPollTimer = 0;
+        return;
+      }
+
+      try {
+        if (attempts <= 6 || attempts % 2 === 0) {
+          const t = refreshTitleCache(true);
+          if (t) setTitleUI(t, state.currentEp);
+        }
+
+        clickPlayerBigPlayButton();
+
+        try {
+          const extraPlay = document.querySelectorAll(
+            '.vjs-big-play-button, .jw-icon-display, .plyr__control--overlaid, ' +
+            '[class*="play-button"], [class*="big-play"], button[aria-label*="Play"], ' +
+            '.fp-play, .dplayer-bezel-icon, .art-state'
+          );
+          for (let i = 0; i < extraPlay.length; i++) {
+            const b = extraPlay[i];
+            const r = b.getBoundingClientRect();
+            if (r.width > 10 && r.height > 10 && r.top < window.innerHeight && r.left < window.innerWidth) {
+              b.click();
+            }
+          }
+        } catch (_) {}
+
+        let v = bestVideo(document);
+        if (!v && state.lastActiveVideo?.isConnected) v = state.lastActiveVideo;
+
+        if (v && !isDisqualifiedVideo(v)) {
+          trySkipPreRollAdSafely(v);
+          safePlay(v);
+
+          if (state.overlay && state.video !== v) {
+            const container = ensureSafeContainer(v);
+            if (container) {
+              createOverlay(v, container, state.pseudoFullscreen || !fullscreenElement());
+            }
+          }
+
+          if (!state.overlay && !fullscreenElement()) {
+            setTopWindowIframeFullscreenLock(true);
+            enterUniversalFullscreen(v);
+          } else if (state.overlay && state.video === v) {
+            if (v.paused) safePlay(v);
+          }
+
+          if (
+            state.overlay &&
+            !v.paused &&
+            Number.isFinite(v.duration) &&
+            v.duration >= 30 &&
+            v.currentTime >= 0
+          ) {
+            clearInterval(state.autoPlayPollTimer);
+            state.autoPlayPollTimer = 0;
+            state.expectingSeamlessEpisode = false;
+            clearAutoFullscreenBridge();
+            dbg('SEAMLESS', `Recovery success at attempt ${attempts} for ${state.currentEp}`);
+            showHud(`กำลังเล่น ${state.currentEp || 'ตอนถัดไป'}`, 1800, 'nextEp');
+          }
+        }
+      } catch (err) {
+        dbg('SEAMLESS-ERR', String(err?.message || err));
+      }
+    }, 400);
+  }
+
+  async function executeNextEpisodeInTopWindow(preferredEp = '') {
+    if (window !== window.top) {
+      try {
+        window.top.postMessage({
+          type: 'tmv271_trigger_next_ep',
+          currentEp: preferredEp || state.currentEp || ''
+        }, '*');
+      } catch (_) {}
+      return true;
+    }
+
+    const now = Date.now();
+    if (now - state.lastAutoNextTriggerTs < 5000) return false;
+
+    const target = findNextEpisodeTarget(document, preferredEp || state.currentEp);
+    if (!target) {
+      dbg('AUTO-NEXT', 'No next episode button found');
+      broadcastToAllFrames({ type: 'tmv271_no_next_ep' });
+      return false;
+    }
+
+    state.lastAutoNextTriggerTs = now;
+    const nextEpBadge = target.ep || '';
+    const targetNum = target.targetNum || getNumericEp(nextEpBadge);
+    if (nextEpBadge) state.currentEp = nextEpBadge;
+    state.cachedKeysList = null;
+
+    saveAutoFullscreenBridge(nextEpBadge);
+    markPendingEpisodeNavigation(nextEpBadge);
+    setTopWindowIframeFullscreenLock(true);
+    updateLiveDOMNavigationButtons(targetNum, nextEpBadge);
+    dbg('AUTO-NEXT', `Switching to ${nextEpBadge || 'Next EP'}`);
+
+    try {
+      if (target.type === 'select' && target.select && target.option) {
+        const optVal = target.option.value || '';
+        if (/^https?:\/\//i.test(optVal) || optVal.startsWith('/')) {
+          const swapped = await tryAjaxSwapEpisodeInPlace(optVal, nextEpBadge, targetNum);
+          if (swapped) return true;
+        }
+        target.select.value = target.option.value;
+        target.option.selected = true;
+        target.select.dispatchEvent(new Event('change', { bubbles: true }));
+      } else if (target.type === 'url_fallback' && target.href) {
+        const swapped = await tryAjaxSwapEpisodeInPlace(target.href, nextEpBadge, targetNum);
+        if (swapped) return true;
+        location.href = target.href;
+        return true;
+      } else if (target.type === 'element' && target.element) {
+        const href = target.href || target.element.getAttribute?.('href') || '';
+        const dataSrc = target.dataSrc || target.element.getAttribute?.('data-src') || '';
+        const hasInlineJs = target.element.hasAttribute?.('onclick') || href.startsWith('javascript:');
+
+        if (dataSrc && /^https?:\/\//i.test(dataSrc)) {
+          try {
+            const playerIframe = document.querySelector(
+              '.player-box iframe, #player-main iframe, .cyber-player-wrapper iframe, ' +
+              'iframe[data-src*="playhdhls"], iframe[src*="playhdhls"], .player iframe'
+            );
+            if (playerIframe) {
+              dbg('AUTO-NEXT', `Direct iframe swap → ${dataSrc.slice(0, 50)}`);
+              try {
+                const allBtns = document.querySelectorAll('.cyber-ep-btn, [data-ep]');
+                for (const b of allBtns) {
+                  b.classList.remove('active');
+                  if (getNumericEp(extractEpFromElement(b)) === targetNum) {
+                    b.classList.add('active');
+                  }
+                }
+              } catch (_) {}
+              playerIframe.src = dataSrc;
+              state.currentEp = nextEpBadge;
+              try { history.pushState({ ep: nextEpBadge }, document.title, location.href); } catch (_) {}
+              startSeamlessEpisodeRecovery(nextEpBadge);
+              setTimeout(() => {
+                const newTitle = refreshTitleCache(true);
+                broadcastTitleToFrames(newTitle, state.currentEp);
+                pingAllFramesAutoPlayAndFullscreen(state.currentEp);
+              }, 500);
+              return true;
+            }
+          } catch (_) {}
+        }
+
+        if (href && href !== '#' && !hasInlineJs) {
+          const swapped = await tryAjaxSwapEpisodeInPlace(href, nextEpBadge, targetNum);
+          if (swapped) return true;
+        }
+        target.element.click();
+      }
+    } catch (_) {}
+
+    startSeamlessEpisodeRecovery(nextEpBadge || state.currentEp);
+
+    setTimeout(() => {
+      const newTitle = refreshTitleCache(true);
+      broadcastTitleToFrames(newTitle, state.currentEp);
+      pingAllFramesAutoPlayAndFullscreen(state.currentEp);
+    }, 600);
+
+    setTimeout(() => {
+      if (state.expectingSeamlessEpisode) {
+        clickPlayerBigPlayButton();
+        const v = bestVideo(document) || state.lastActiveVideo;
+        if (v && !isDisqualifiedVideo(v)) {
+          safePlay(v);
+          if (!state.overlay) enterUniversalFullscreen(v);
+        }
+      }
+    }, 1800);
+
+    return true;
+  }
+
+  function broadcastToAllFrames(msg) {
+    try { window.top?.postMessage(msg, '*'); } catch (_) {}
+    try {
+      const frames = document.querySelectorAll('iframe');
+      for (let i = 0; i < frames.length; i++) {
+        frames[i].contentWindow?.postMessage(msg, '*');
+      }
+    } catch (_) {}
+  }
+
+  function triggerSeamlessNextEpisode(manual = false) {
+    if (!manual && !state.autoNextEnabled) return;
+
+    const now = Date.now();
+    if (now - state.lastAutoNextTriggerTs < 5000) return;
+
+    try {
+      const live = detectActiveEpFromDOM(document);
+      if (live) state.currentEp = live;
+    } catch (_) {}
+
+    if (state.video) {
+      clearSavedPositionForVideo(state.video);
+    }
+    state.expectingSeamlessEpisode = true;
+    saveAutoFullscreenBridge(state.currentEp);
+    setTopWindowIframeFullscreenLock(true);
+
+    const curNum = getNumericEp(state.currentEp);
+    const nextLabel = Number.isFinite(curNum) ? `EP ${curNum + 1}` : 'ตอนถัดไป';
+    showHud(`กำลังเข้าสู่ ${nextLabel} อัตโนมัติ...`, 3200, 'nextEp');
+
+    if (window === window.top) {
+      executeNextEpisodeInTopWindow(state.currentEp);
+    } else {
+      try {
+        window.top.postMessage({
+          type: 'tmv271_trigger_next_ep',
+          currentEp: state.currentEp || ''
+        }, '*');
+      } catch (_) {}
+    }
+  }
+
+  /* --- Auto-Play & Ad Skipper --- */
+
+  function clickPlayerBigPlayButton() {
+    try {
+      const forceMode = !!(state.overlay || state.pseudoFullscreen ||
+        (document.documentElement && document.documentElement.hasAttribute(CFG.hostAttr)) ||
+        (document.body && document.body.hasAttribute(CFG.hostAttr)));
+      const btns = document.querySelectorAll(BIG_PLAY_SEL);
+      for (let i = 0; i < btns.length; i++) {
+        const b = btns[i];
+        if (forceMode) {
+          try { b.click(); } catch (_) {}
+          continue;
+        }
+        const r = b.getBoundingClientRect();
+        if (r.width > 10 && r.height > 10) {
+          b.click();
+        }
+      }
+      if (!(window === window.top && hasCrossOriginPlayerIframeOnPage())) {
+        const extra = document.querySelectorAll(
+          '[class*="big-play"], [class*="play-button"], [class*="btn-play"], ' +
+          'button[title*="Play"], button[aria-label*="Play"], .play-icon, .icon-play, ' +
+          '[class*="play-btn"], [class*="btn_play"]'
+        );
+        for (let i = 0; i < extra.length; i++) {
+          const b = extra[i];
+          if (forceMode) {
+            try { b.click(); } catch (_) {}
+            continue;
+          }
+          const r = b.getBoundingClientRect();
+          if (r.width > 12 && r.height > 12 && r.top < window.innerHeight * 0.9) {
+            b.click();
+          }
+        }
+      }
+    } catch (_) {}
+  }
+
+  function isCurrentlyPlayingPreRollAd(video) {
+    if (!video) return false;
+    try {
+      const skipBtn = document.querySelector(AD_SKIP_SEL);
+      if (skipBtn && area(skipBtn) > 0) return true;
+      const adIndicators = document.querySelectorAll('.jw-flag-ads, .vjs-ad-playing, .ima-ad-container, [class*="ad-showing"]');
+      if (adIndicators.length > 0) return true;
+    } catch (_) {}
+    return false;
+  }
+
+  function trySkipPreRollAdSafely(video) {
+    if (!video || !isCurrentlyPlayingPreRollAd(video)) return false;
+    try {
+      state.isSkippingAd = true;
+      const skipBtns = document.querySelectorAll(AD_SKIP_SEL);
+      for (let i = 0; i < skipBtns.length; i++) {
+        const btn = skipBtns[i];
+        if (area(btn) > 0) {
+          btn.click();
+          dbg('AD-SKIP', 'Clicked Skip Ad button');
+        }
+      }
+
+      const dur = video.duration;
+      if (Number.isFinite(dur) && dur > 1 && dur < 120 && video.currentTime < dur - 0.5) {
+        showHud('กำลังข้ามโฆษณาคั่น...', 1000, 'fastForward');
+        safeSeek(video, dur - 0.3, false);
+      }
+      setTimeout(() => { state.isSkippingAd = false; }, 1500);
+      return true;
+    } catch (_) {
+      state.isSkippingAd = false;
+    }
+    return false;
+  }
+
+  function stopAdWatcher() {
+    if (state.adWatchTimer) {
+      clearInterval(state.adWatchTimer);
+      state.adWatchTimer = 0;
+    }
+    state.adWatchActive = false;
+  }
+
+  function startAdWatcher() {
+    if (state.adWatchActive || !state.video) return;
+    state.adWatchActive = true;
+    state.adWatchTimer = setInterval(() => {
+      if (!state.video || state.destroyed) {
+        stopAdWatcher();
+        return;
+      }
+      if (isCurrentlyPlayingPreRollAd(state.video) || (Number.isFinite(state.video.duration) && state.video.duration < 90)) {
+        trySkipPreRollAdSafely(state.video);
+      }
+    }, CFG.adWatchIntervalMs);
+  }
+
+  function findPrimaryPlayerElement() {
+    const mainIframe = findMainPlayerIframeInTopDoc(document);
+    if (mainIframe) return mainIframe;
+
+    const v = state.lastActiveVideo?.isConnected && area(state.lastActiveVideo) > 0 && !isDisqualifiedVideo(state.lastActiveVideo)
+      ? state.lastActiveVideo
+      : bestVideo(document);
+    if (v) return ensureSafeContainer(v) || v;
+
+    const containers = document.querySelectorAll(PLAYER_AREA_SEL);
+    for (let i = 0; i < containers.length; i++) {
+      const c = containers[i];
+      const r = c.getBoundingClientRect();
+      if (r.width >= 200 && r.height >= 120) return c;
+    }
+    return null;
+  }
+
+  function pingAllFramesToShowRecovery() {
+    const v = state.lastActiveVideo?.isConnected && area(state.lastActiveVideo) > 0 && !isDisqualifiedVideo(state.lastActiveVideo)
+      ? state.lastActiveVideo
+      : bestVideo(document);
+    if (v) showRecovery(v);
+
+    try {
+      const frames = document.querySelectorAll('iframe');
+      for (let i = 0; i < frames.length; i++) {
+        frames[i].contentWindow?.postMessage({
+          type: 'tmv271_show_recovery',
+          ep: state.currentEp || '',
+          title: state.cachedTitle || ''
+        }, '*');
+      }
+    } catch (_) {}
+  }
+
+  function scrollToPlayerAndFocusRecovery(smooth = true) {
+    if (window !== window.top) return;
+    if (fullscreenElement() || state.pseudoFullscreen) return;
+
+    const targetEl = findPrimaryPlayerElement();
+    if (targetEl) {
+      try {
+        const rect = targetEl.getBoundingClientRect();
+        const isOutOfView = rect.top < -30 || rect.bottom > window.innerHeight + 30 || rect.top > window.innerHeight * 0.45;
+        if (isOutOfView) {
+          const targetTop = Math.max(0, window.scrollY + rect.top - Math.max(16, (window.innerHeight - rect.height) * 0.22));
+          window.scrollTo({
+            top: targetTop,
+            behavior: smooth ? 'smooth' : 'auto'
+          });
+        }
+      } catch (_) {}
+    }
+
+    pingAllFramesToShowRecovery();
+    if (state.epScrollTimer) clearTimeout(state.epScrollTimer);
+    state.epScrollTimer = setTimeout(() => {
+      state.epScrollTimer = 0;
+      const newTitle = refreshTitleCache(true);
+      broadcastTitleToFrames(newTitle, state.currentEp);
+      pingAllFramesToShowRecovery();
+    }, 650);
+  }
+
+  function markPendingEpisodeNavigation(epBadge) {
+    try {
+      sessionStorage.setItem(CFG.epScrollKey, JSON.stringify({
+        ep: epBadge || '',
+        ts: Date.now()
+      }));
+    } catch (_) {}
+  }
+
+  function checkPendingEpisodeScrollOnLoad() {
+    const bridge = consumeAutoFullscreenBridge();
+    if (bridge) {
+      state.expectingSeamlessEpisode = true;
+      if (bridge.ep) state.currentEp = bridge.ep;
+      if (typeof bridge.speed === 'number') state.savedSpeed = bridge.speed;
+      if (typeof bridge.aspectIndex === 'number') state.aspectIndex = bridge.aspectIndex;
+      if (typeof bridge.brightness === 'number') state.brightness = bridge.brightness;
+
+      if (window === window.top) {
+        setTopWindowIframeFullscreenLock(true);
+      } else {
+        let attempts = 0;
+        if (state.autoPlayPollTimer) clearInterval(state.autoPlayPollTimer);
+        state.autoPlayPollTimer = setInterval(() => {
+          attempts++;
+          if (attempts > 32) {
+            clearInterval(state.autoPlayPollTimer);
+            state.autoPlayPollTimer = 0;
+            return;
+          }
+          clickPlayerBigPlayButton();
+          const v = bestVideo(document);
+          if (v && !isDisqualifiedVideo(v)) {
+            trySkipPreRollAdSafely(v);
+            safePlay(v);
+            if (!state.overlay) {
+              setTopWindowIframeFullscreenLock(true);
+              enterUniversalFullscreen(v);
+            }
+            if (state.overlay && !v.paused && Number.isFinite(v.duration) && v.duration >= CFG.minMainVideoDurationSec) {
+              clearInterval(state.autoPlayPollTimer);
+              state.autoPlayPollTimer = 0;
+              clearAutoFullscreenBridge();
+            }
+          }
+        }, 400);
+      }
+    }
+
+    if (window !== window.top) return;
+    try {
+      const raw = sessionStorage.getItem(CFG.epScrollKey);
+      if (!raw) return;
+      sessionStorage.removeItem(CFG.epScrollKey);
+      const data = JSON.parse(raw);
+      if (!data || typeof data.ts !== 'number' || Date.now() - data.ts > 15000) return;
+
+      if (data.ep) state.currentEp = data.ep;
+
+      const runPostLoadScroll = () => {
+        const full = refreshTitleCache(true);
+        broadcastTitleToFrames(full, state.currentEp);
+        scrollToPlayerAndFocusRecovery(true);
+      };
+
+      if (document.readyState === 'complete') {
+        setTimeout(runPostLoadScroll, 180);
+      } else {
+        window.addEventListener('load', () => setTimeout(runPostLoadScroll, 220), { once: true });
+        setTimeout(runPostLoadScroll, 450);
+      }
+    } catch (_) {}
+  }
+
+  function setupEpisodeClickTracker() {
+    if (window !== window.top) return;
+
+    const triggerManualEpisodeSwitch = ep => {
+      state.currentEp = ep;
+      state.cachedKeysList = null;
+      if (!fullscreenElement() && !state.pseudoFullscreen && !state.overlay) {
+        clearAutoFullscreenBridge();
+        markPendingEpisodeNavigation(ep);
+        const full = refreshTitleCache(true);
+        broadcastTitleToFrames(full, ep);
+        setTimeout(() => {
+          scrollToPlayerAndFocusRecovery(true);
+        }, 90);
+      }
+    };
+
+    const handleEpInteraction = e => {
+      const target = e.target;
+      if (!(target instanceof Element)) return;
+      if (target.closest(`#${CFG.shadowHostId}, #${CFG.recoveryHostId}`)) return;
+
+      const clickable = target.closest(
+        'a, button, li, [role="button"], [onclick], [data-ep], [data-episode], ' +
+        '.ep-item, .episode-item, .episode, span.episode, div.episode, [class*="ep"]'
+      );
+      if (!clickable || clickable.children.length > 6) return;
+
+      let ep = extractEpFromElement(clickable);
+      if (!ep) {
+        const inner = target.closest('.episode, span.episode, [data-ep], [data-episode]');
+        if (inner) ep = extractEpFromElement(inner);
+      }
+      if (ep) {
+        state.currentEp = ep;
+        state.cachedKeysList = null;
+        triggerManualEpisodeSwitch(ep);
+        dbg('EP-CLICK', `User selected ${ep}`);
+      }
+    };
+
+    document.addEventListener('click', handleEpInteraction, { capture: true, passive: true });
+    document.addEventListener('change', e => {
+      if (e.target instanceof HTMLSelectElement) {
+        const opt = e.target.selectedOptions?.[0];
+        const ep = parseEpBadge(opt ? opt.textContent : '', true) || parseEpBadge(opt ? opt.value : '', false);
+        if (ep) {
+          triggerManualEpisodeSwitch(ep);
+        }
+      }
+    }, { capture: true, passive: true });
+  }
+
+  /* =========================================================
+     CROSS-FRAME REMOTE MESSAGE RELAY (FIXES IFRAME FOCUS TRAP)
+  ========================================================= */
+  window.addEventListener('message', event => {
+    const data = event.data;
+    if (!data || typeof data !== 'object') return;
+
+    if (data.type === 'tmv271_remote_key') {
+      // Forwarded D-Pad event from parent or child frame
+      if (state.overlay && state.video) {
+        processRemoteCommand(data.cmd, null);
+      } else if (window === window.top) {
+        const f = findMainPlayerIframeInTopDoc(document);
+        if (f && f.contentWindow && event.source !== f.contentWindow) {
+          try { f.contentWindow.postMessage(data, '*'); } catch (_) {}
+        }
+      }
+      return;
+    }
+
+    if (data.type === 'tmv271_hide_btn' && data.id !== instanceId) {
+      if (Math.abs(data.time - lastRecoveryTime) < 100) {
+        if (data.id > instanceId) removeRecovery();
+      } else {
+        removeRecovery();
+      }
+      return;
+    }
+
+    if (data.type === 'tmv271_parent_fs_lock' && window === window.top) {
+      setTopWindowIframeFullscreenLock(Boolean(data.enable));
+      return;
+    }
+
+    if (data.type === 'tmv271_trigger_next_ep' && window === window.top) {
+      if (typeof data.currentEp === 'string' && data.currentEp) {
+        state.currentEp = data.currentEp;
+      }
+      executeNextEpisodeInTopWindow(state.currentEp);
+      return;
+    }
+
+    if (data.type === 'tmv271_no_next_ep') {
+      if (state.overlay) {
+        showHud('ไม่พบตอนถัดไป (อาจเป็นตอนล่าสุดแล้ว)', 2200, 'nextEp');
+      }
+      return;
+    }
+
+    if (data.type === 'tmv271_seamless_start' && window !== window.top) {
+      state.expectingSeamlessEpisode = true;
+      if (typeof data.ep === 'string' && data.ep) state.currentEp = data.ep;
+      if (typeof data.title === 'string' && data.title) {
+        state.cachedTitle = data.title.slice(0, 220);
+        setTitleUI(state.cachedTitle, state.currentEp);
+      }
+      if (typeof data.speed === 'number') state.savedSpeed = data.speed;
+      setTopWindowIframeFullscreenLock(true);
+      startSeamlessEpisodeRecovery(data.ep || state.currentEp);
+      clickPlayerBigPlayButton();
+      const v = bestVideo(document);
+      if (v && !isDisqualifiedVideo(v)) {
+        safePlay(v);
+        if (!state.overlay) enterUniversalFullscreen(v);
+      }
+      return;
+    }
+
+    if (data.type === 'tmv271_show_recovery') {
+      if (typeof data.ep === 'string' && data.ep) state.currentEp = data.ep;
+      if (typeof data.title === 'string' && data.title) {
+        state.cachedTitle = data.title.slice(0, 220);
+        state.cachedKeysList = null;
+        setTitleUI(state.cachedTitle, state.currentEp);
+      }
+      const v = state.lastActiveVideo?.isConnected && area(state.lastActiveVideo) > 0 && !isDisqualifiedVideo(state.lastActiveVideo)
+        ? state.lastActiveVideo
+        : bestVideo(document);
+      if (v) showRecovery(v);
+      return;
+    }
+
+    if (window === window.top && data.type === CFG.titleType + ':req' && event.source) {
+      try {
+        event.source.postMessage({
+          type: CFG.titleType + ':res',
+          title: refreshTitleCache(false),
+          ep: state.currentEp || ''
+        }, '*');
+      } catch (_) {}
+      return;
+    }
+
+    if (window !== window.top && data.type === CFG.titleType + ':res' && typeof data.title === 'string' && data.title) {
+      const prevEp = state.currentEp;
+      if (typeof data.ep === 'string' && data.ep) state.currentEp = data.ep;
+      state.cachedTitle = data.title.slice(0, 220);
+      state.cachedKeysList = null;
+      setTitleUI(state.cachedTitle, state.currentEp);
+      if (prevEp && state.currentEp && prevEp !== state.currentEp && state.overlay) {
+        showHud(`กำลังเล่น ${state.currentEp}`, 2200, 'nextEp');
+      }
+      if (state.video) {
+        tryRestorePlaybackPosition(state.video);
+      }
+    }
+  });
+
+  function broadcastHideRecovery() {
+    const msg = { type: 'tmv271_hide_btn', id: instanceId, time: lastRecoveryTime };
+    broadcastToAllFrames(msg);
+  }
+
+  /* =========================================================
+     2. DOM & VIDEO DISCOVERY (STRICT BANNER AD QUARANTINE)
+  ========================================================= */
+
+  function fullscreenElement() {
+    return document.fullscreenElement ||
+      document.mozFullScreenElement ||
+      document.webkitFullscreenElement ||
+      null;
+  }
+
+  function area(el) {
+    try {
+      const r = el.getBoundingClientRect();
+      return r.width > 0 && r.height > 0 ? r.width * r.height : 0;
+    } catch (_) {
+      return 0;
+    }
+  }
+
+  function hasCrossOriginPlayerIframeOnPage() {
+    if (window !== window.top) return false;
+    return Boolean(findMainPlayerIframeInTopDoc(document));
+  }
+
+  function isDisqualifiedVideo(v) {
+    if (!isVideo(v)) return true;
+    try {
+      if (window === window.top && hasCrossOriginPlayerIframeOnPage()) {
+        return true;
+      }
+      if (v.closest('a[href]')) return true;
+
+      const src = `${v.currentSrc || ''} ${v.src || ''}`;
+      if (RX.adBannerHint.test(src)) return true;
+
+      const adParent = v.closest('[class*="banner"], [id*="banner"], [class*="ads"], [id*="ads"], .widget, header, nav, footer');
+      if (adParent && !adParent.matches(PLAYER_AREA_SEL)) return true;
+    } catch (_) {}
+    return false;
+  }
+
+  function collectVideos(root = document, list = [], depth = 0) {
+    if (!root || depth > 5) return list;
+    if (window === window.top && hasCrossOriginPlayerIframeOnPage()) return list;
+
+    if (isVideo(root)) {
+      if (!isDisqualifiedVideo(root)) list.push(root);
+      return list;
+    }
+    try {
+      const vids = root.querySelectorAll('video');
+      for (let i = 0; i < vids.length; i++) {
+        if (!isDisqualifiedVideo(vids[i])) {
+          list.push(vids[i]);
+        }
+      }
+
+      if (typeof document.createTreeWalker === 'function') {
+        const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+        let node = walker.currentNode;
+        let count = 0;
+        while (node && count < 600) {
+          if (node.shadowRoot && node.id !== CFG.shadowHostId && node.id !== CFG.recoveryHostId) {
+            collectVideos(node.shadowRoot, list, depth + 1);
+          }
+          node = walker.nextNode();
+          count++;
+        }
+      }
+    } catch (_) {}
+    return list;
+  }
+
+  function invalidateBestVideoCache() {
+    state.bestVideoCache = null;
+    state.bestVideoCacheTs = 0;
+    state.bestVideoCacheRoot = null;
+  }
+
+  function bestVideo(root = document) {
+    if (window === window.top && hasCrossOriginPlayerIframeOnPage()) return null;
+
+    const now = performance.now();
+    if (
+      state.bestVideoCache &&
+      state.bestVideoCacheRoot === root &&
+      (now - state.bestVideoCacheTs) < CFG.bestVideoCacheMs &&
+      state.bestVideoCache.isConnected &&
+      area(state.bestVideoCache) > 0 &&
+      !isDisqualifiedVideo(state.bestVideoCache)
+    ) {
+      return state.bestVideoCache;
+    }
+
+    if (isVideo(root)) {
+      const res = isDisqualifiedVideo(root) ? null : root;
+      state.bestVideoCache = res;
+      state.bestVideoCacheTs = now;
+      state.bestVideoCacheRoot = root;
+      return res;
+    }
+    const videos = collectVideos(root);
+    if (!videos.length) {
+      if (state.lastActiveVideo?.isConnected && area(state.lastActiveVideo) > 0 && !isDisqualifiedVideo(state.lastActiveVideo)) {
+        state.bestVideoCache = state.lastActiveVideo;
+        state.bestVideoCacheTs = now;
+        state.bestVideoCacheRoot = root;
+        return state.lastActiveVideo;
+      }
+      state.bestVideoCache = null;
+      state.bestVideoCacheTs = now;
+      state.bestVideoCacheRoot = root;
+      return null;
+    }
+
+    let best = null;
+    let bestScore = -Infinity;
+
+    for (let i = 0; i < videos.length; i++) {
+      const v = videos[i];
+      if (!v.isConnected) continue;
+      const vArea = area(v);
+      let score = 0;
+      if (vArea > 0) score += 20000;
+      if (!v.paused && !v.ended) score += 100000;
+      if (v === state.lastActiveVideo) score += 50000;
+      if (Number.isFinite(v.duration) && v.duration >= CFG.minMainVideoDurationSec) score += 80000;
+      if (v.readyState >= 2) score += 10000;
+      score += Math.min(vArea / 100, 40000);
+      if (v.currentTime > 0) score += 1000;
+
+      if (score > bestScore) {
+        bestScore = score;
+        best = v;
+      }
+    }
+    state.bestVideoCache = best;
+    state.bestVideoCacheTs = now;
+    state.bestVideoCacheRoot = root;
+    return best;
+  }
+
+  function ensureSafeContainer(video) {
+    if (!video) return null;
+
+    if (video.parentElement?.hasAttribute('data-tmv271-wrapper')) {
+      return video.parentElement;
+    }
+
+    try {
+      const known = video.closest(
+        '.html5-video-player, .plyr, .video-js, .jwplayer, .flowplayer, ' +
+        '.dplayer, .art-video-player, .mejs__container, .vplayer, ' +
+        '[data-player], [data-video-player], [class*="player-container"], ' +
+        '[class*="video-container"], [class*="video-player"], [class*="video-wrapper"]'
+      );
+      if (
+        known &&
+        known !== document.body &&
+        known !== document.documentElement &&
+        known.querySelectorAll('video').length <= 2
+      ) {
+        return known;
+      }
+    } catch (_) {}
+
+    const vArea = area(video);
+    let curr = video.parentElement;
+    let best = curr;
+    let bestScore = -Infinity;
+    let depth = 0;
+
+    while (
+      curr &&
+      curr !== document.body &&
+      curr !== document.documentElement &&
+      !(curr instanceof ShadowRoot) &&
+      depth < CFG.maxDepth
+    ) {
+      const a = area(curr);
+      if (a > 0) {
+        const ratio = vArea ? a / vArea : 999;
+        let score = ratio >= 0.95 && ratio <= 2.2 ? 100 : ratio <= 4.5 ? 40 : -Math.min(ratio, 120);
+        try {
+          if (getComputedStyle(curr).position !== 'static') score += 10;
+          if (curr.querySelectorAll('video').length > 1) score -= 80;
+        } catch (_) {}
+        score -= depth * 4;
+        if (score > bestScore) {
+          bestScore = score;
+          best = curr;
+        }
+      }
+      curr = curr.parentElement;
+      depth++;
+    }
+
+    if (!best || best === document.body || best === document.documentElement) {
+      try {
+        const wrapper = document.createElement('div');
+        wrapper.setAttribute('data-tmv271-wrapper', '1');
+        wrapper.style.cssText = 'position:relative;width:100%;height:100%;display:contents;';
+        video.parentNode.insertBefore(wrapper, video);
+        wrapper.appendChild(video);
+        state.createdWrapper = wrapper;
+        return wrapper;
+      } catch (_) {
+        return video.parentElement;
+      }
+    }
+
+    return best;
+  }
+
+  /* =========================================================
+     3. FULLSCREEN & SCREEN WAKE LOCK
+  ========================================================= */
+
+  async function requestWakeLock() {
+    try {
+      if ('wakeLock' in navigator && !state.wakeLock && !document.hidden) {
+        state.wakeLock = await navigator.wakeLock.request('screen');
+        state.wakeLock.addEventListener('release', () => {
+          state.wakeLock = null;
+        }, { once: true });
+      }
+    } catch (_) {}
+  }
+
+  function releaseWakeLock() {
+    if (!state.wakeLock) return;
+    try {
+      state.wakeLock.release();
+    } catch (_) {}
+    state.wakeLock = null;
+  }
+
+  function patchFullscreenAPI() {
+    if (typeof Element === 'undefined' || !origReqFS) return;
+
+    const interceptReqFS = function (...args) {
+      try {
+        if (isVideo(this) && !isDisqualifiedVideo(this)) {
+          state.lastActiveVideo = this;
+          const container = ensureSafeContainer(this);
+          if (container && container !== this) {
+            if (container.hasAttribute('data-tmv271-wrapper')) {
+              container.style.display = 'block';
+            }
+            return origReqFS.apply(container, args);
+          }
+        } else if (this instanceof Element) {
+          const innerVideo = bestVideo(this);
+          if (innerVideo) state.lastActiveVideo = innerVideo;
+        }
+      } catch (_) {}
+      return origReqFS.apply(this, args);
+    };
+
+    const applyPatchToTarget = targetWin => {
+      if (!targetWin || !targetWin.Element) return;
+      try {
+        const proto = targetWin.Element.prototype;
+        if (proto.requestFullscreen) proto.requestFullscreen = interceptReqFS;
+        if (proto.mozRequestFullScreen) proto.mozRequestFullScreen = interceptReqFS;
+        if (proto.webkitRequestFullscreen) proto.webkitRequestFullscreen = interceptReqFS;
+      } catch (_) {}
+    };
+
+    applyPatchToTarget(window);
+    if (pageWin && pageWin !== window) applyPatchToTarget(pageWin);
+  }
+
+  function unlockIframes() {
+    try {
+      const iframes = document.querySelectorAll('iframe:not([data-tmv271-unlocked])');
+      for (let i = 0; i < iframes.length; i++) {
+        const f = iframes[i];
+        f.setAttribute('data-tmv271-unlocked', '1');
+        if (!f.hasAttribute('allowfullscreen')) f.setAttribute('allowfullscreen', 'true');
+        const allow = f.getAttribute('allow') || '';
+        if (!allow.includes('fullscreen')) {
+          f.setAttribute('allow', allow ? `${allow}; fullscreen *; autoplay *` : 'fullscreen *; autoplay *');
+        }
+      }
+    } catch (_) {}
+  }
+
+  /* =========================================================
+     4. SHADOW DOM ENCAPSULATED CSS & 10-FOOT TV UI
+  ========================================================= */
+
+  function installHostStyles(rootDoc = document) {
+    if (!rootDoc || rootDoc.getElementById(CFG.hostStyleId)) return;
+
+    const style = rootDoc.createElement('style');
+    style.id = CFG.hostStyleId;
+    style.textContent = `
+      html[${CFG.lockScrollAttr}="1"],
+      html[${CFG.lockScrollAttr}="1"] body {
+        overflow: hidden !important;
+        overscroll-behavior: none !important;
+      }
+
+      [${CFG.parentWrapFsAttr}="1"] {
+        position: fixed !important;
+        inset: 0 !important;
+        width: 100vw !important;
+        height: 100vh !important;
+        max-width: none !important;
+        max-height: none !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        z-index: 2147483645 !important;
+        background: #000 !important;
+        transform: none !important;
+      }
+      iframe[${CFG.parentIframeFsAttr}="1"] {
+        position: fixed !important;
+        inset: 0 !important;
+        top: 0 !important;
+        left: 0 !important;
+        width: 100vw !important;
+        height: 100vh !important;
+        max-width: none !important;
+        max-height: none !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        border: 0 !important;
+        z-index: 2147483646 !important;
+        background: #000 !important;
+      }
+
+      [${CFG.hostAttr}="1"] {
+        position: relative !important;
+        width: 100% !important;
+        height: 100% !important;
+        max-width: none !important;
+        max-height: none !important;
+        background: #000 !important;
+        overflow: hidden !important;
+      }
+      [${CFG.pseudoAttr}="1"] {
+        position: fixed !important;
+        inset: 0 !important;
+        width: 100vw !important;
+        height: 100vh !important;
+        max-width: none !important;
+        max-height: none !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        z-index: 2147483646 !important;
+        background: #000 !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+      }
+
+      [${CFG.hostAttr}="1"] .jw-media,
+      [${CFG.hostAttr}="1"] .jw-aspect,
+      [${CFG.hostAttr}="1"] .plyr__video-wrapper,
+      [${CFG.hostAttr}="1"] .vjs-tech,
+      [${CFG.hostAttr}="1"] .html5-video-container,
+      [${CFG.hostAttr}="1"] .dplayer-video-wrap,
+      [${CFG.hostAttr}="1"] .art-video-player,
+      [${CFG.hostAttr}="1"] .mejs__mediaelement {
+        position: absolute !important;
+        inset: 0 !important;
+        width: 100% !important;
+        height: 100% !important;
+        max-width: none !important;
+        max-height: none !important;
+        padding: 0 !important;
+        margin: 0 !important;
+      }
+
+      [${CFG.hostAttr}="1"] video[${CFG.videoAttr}="1"] {
+        position: absolute !important;
+        inset: 0 !important;
+        top: 0 !important;
+        left: 0 !important;
+        width: 100% !important;
+        height: 100% !important;
+        max-width: none !important;
+        max-height: none !important;
+        min-width: 100% !important;
+        min-height: 100% !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        transform: none !important;
+        object-position: center center !important;
+        pointer-events: none !important;
+        z-index: 1 !important;
+      }
+      [${CFG.hostAttr}="1"] video[${CFG.videoAttr}="1"][${CFG.fitAttr}="contain"] { object-fit: contain !important; }
+      [${CFG.hostAttr}="1"] video[${CFG.videoAttr}="1"][${CFG.fitAttr}="cover"] { object-fit: cover !important; }
+      [${CFG.hostAttr}="1"] video[${CFG.videoAttr}="1"][${CFG.fitAttr}="fill"] { object-fit: fill !important; }
+
+      [${CFG.hostAttr}="1"] video[${CFG.videoAttr}="1"]::-webkit-media-controls,
+      [${CFG.hostAttr}="1"] video[${CFG.videoAttr}="1"]::-webkit-media-controls-enclosure,
+      [${CFG.hostAttr}="1"] video[${CFG.videoAttr}="1"]::-moz-list-bullet {
+        display: none !important;
+        opacity: 0 !important;
+        pointer-events: none !important;
+      }
+
+      [${CFG.hostAttr}="1"] > *:not(video):not(#${CFG.shadowHostId}):not(:has(video)) {
+        display: none !important;
+        opacity: 0 !important;
+        visibility: hidden !important;
+        pointer-events: none !important;
+      }
+
+      [${CFG.hostAttr}="1"] .vjs-control-bar,
+      [${CFG.hostAttr}="1"] .vjs-big-play-button,
+      [${CFG.hostAttr}="1"] .vjs-modal-dialog,
+      [${CFG.hostAttr}="1"] .plyr__controls,
+      [${CFG.hostAttr}="1"] .plyr__control--overlaid,
+      [${CFG.hostAttr}="1"] .jw-controls,
+      [${CFG.hostAttr}="1"] .jw-controls-backdrop,
+      [${CFG.hostAttr}="1"] .jw-display,
+      [${CFG.hostAttr}="1"] .jw-overlays,
+      [${CFG.hostAttr}="1"] .jw-captions,
+      [${CFG.hostAttr}="1"] .jw-title,
+      [${CFG.hostAttr}="1"] .jw-floating-dismiss,
+      [${CFG.hostAttr}="1"] .fp-controls,
+      [${CFG.hostAttr}="1"] .fp-ui,
+      [${CFG.hostAttr}="1"] .dplayer-controller,
+      [${CFG.hostAttr}="1"] .dplayer-controller-mask,
+      [${CFG.hostAttr}="1"] .dplayer-bezel,
+      [${CFG.hostAttr}="1"] .art-bottom,
+      [${CFG.hostAttr}="1"] .art-mask,
+      [${CFG.hostAttr}="1"] .art-layer-autoPlayback,
+      [${CFG.hostAttr}="1"] .mejs__controls,
+      [${CFG.hostAttr}="1"] .mejs__layers .mejs__overlay-play,
+      [${CFG.hostAttr}="1"] .ytp-chrome-bottom,
+      [${CFG.hostAttr}="1"] .ytp-chrome-top,
+      [${CFG.hostAttr}="1"] .ytp-gradient-bottom,
+      [${CFG.hostAttr}="1"] .ytp-gradient-top,
+      [${CFG.hostAttr}="1"] .ytp-bezel,
+      [${CFG.hostAttr}="1"] .ytp-doubletap-ui,
+      [${CFG.hostAttr}="1"] .ytp-doubletap-ui-legacy,
+      [${CFG.hostAttr}="1"] #player-control-overlay,
+      [${CFG.hostAttr}="1"] .ytm-custom-control,
+      [${CFG.hostAttr}="1"] .shaka-controls-container,
+      [${CFG.hostAttr}="1"] .bpx-player-control-wrap,
+      [${CFG.hostAttr}="1"] [class*="vjs-control"]:not(video),
+      [${CFG.hostAttr}="1"] [class*="player-control"]:not(#${CFG.shadowHostId}):not(video),
+      [${CFG.hostAttr}="1"] [class*="video-control"]:not(#${CFG.shadowHostId}):not(video),
+      [${CFG.hostAttr}="1"] [class*="control-bar"]:not(#${CFG.shadowHostId}):not(video),
+      [${CFG.hostAttr}="1"] [class*="controls-bar"]:not(#${CFG.shadowHostId}):not(video) {
+        display: none !important;
+        opacity: 0 !important;
+        visibility: hidden !important;
+        pointer-events: none !important;
+      }
+
+      #${CFG.shadowHostId} {
+        position: absolute !important;
+        inset: 0 !important;
+        width: 100% !important;
+        height: 100% !important;
+        z-index: 2147483647 !important;
+        pointer-events: auto !important;
+        display: block !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        border: 0 !important;
+        background: transparent !important;
+        outline: none !important;
+      }
+
+      #${CFG.recoveryHostId} {
+        position: fixed !important;
+        inset: 0 !important;
+        width: 0 !important;
+        height: 0 !important;
+        z-index: 2147483646 !important;
+        pointer-events: none !important;
+        display: block !important;
+      }
+    `;
+    (rootDoc.head || rootDoc.documentElement)?.appendChild(style);
+  }
+
+  const SHADOW_UI_CSS = `
+    :host {
+      all: initial;
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 2147483647;
+      display: block;
+      pointer-events: auto;
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      color: #fff;
+      user-select: none;
+      outline: none;
+    }
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    #${CFG.overlayId} {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      pointer-events: auto;
+      background: transparent;
+      isolation: isolate;
+      contain: layout style size;
+      outline: none;
+    }
+    .v271-dimmer {
+      position: absolute;
+      inset: 0;
+      background: #000;
+      opacity: 0;
+      pointer-events: none;
+      z-index: 0;
+      will-change: opacity;
+    }
+    .v271-backdrop {
+      position: absolute;
+      inset: 0;
+      z-index: 1;
+      pointer-events: auto;
+      background: transparent;
+    }
+    .v271-ui {
+      transition: opacity 0.16s ease;
+      opacity: 1;
+      will-change: opacity;
+    }
+    #${CFG.overlayId}.hidden-ui .v271-ui {
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    /* TV D-Pad Focus Ring */
+    .tv-focusable:focus,
+    .tv-focusable.tv-focused {
+      outline: none !important;
+      box-shadow: 0 0 0 3px #ffffff, 0 0 0 7px #0a84ff, 0 6px 22px rgba(10, 132, 255, 0.9) !important;
+      transform: scale(1.09);
+      background-color: rgba(10, 132, 255, 0.95) !important;
+      border-color: #ffffff !important;
+      z-index: 10;
+    }
+    input[type="range"].tv-focusable:focus,
+    input[type="range"].tv-focusable.tv-focused {
+      transform: scaleY(1.4);
+      background-color: transparent !important;
+    }
+    .v271-pill:has(input.tv-focused),
+    .v271-pill:has(button.tv-focused),
+    .v271-menu-row:has(.tv-focused) {
+      background: rgba(10, 132, 255, 0.3) !important;
+      border-color: #0a84ff !important;
+      box-shadow: 0 0 0 2px #0a84ff;
+      border-radius: 14px;
+    }
+
+    .v271-debug {
+      position: absolute;
+      top: 84px;
+      left: 28px;
+      max-width: 460px;
+      background: rgba(8, 10, 16, 0.92);
+      border: 1px solid rgba(10, 132, 255, 0.55);
+      border-radius: 12px;
+      padding: 10px 14px;
+      color: #64d2ff;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 13px;
+      line-height: 1.4;
+      z-index: 28;
+      pointer-events: auto;
+      display: none;
+      flex-direction: column;
+      gap: 6px;
+      box-shadow: 0 6px 18px rgba(0, 0, 0, 0.7);
+    }
+    .v271-debug.active { display: flex; }
+    .v271-debug-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      font-weight: 700;
+      color: #30d158;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.16);
+      padding-bottom: 4px;
+    }
+    .v271-debug-clear {
+      background: rgba(255, 255, 255, 0.16);
+      color: #fff;
+      border: 0;
+      border-radius: 6px;
+      padding: 2px 8px;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    .v271-debug-body {
+      max-height: 120px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .v271-hud {
+      position: absolute;
+      top: 14%;
+      left: 50%;
+      transform: translate3d(-50%, 0, 0) scale(0.94);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      background: rgba(14, 14, 20, 0.94);
+      border: 1.5px solid rgba(255, 255, 255, 0.28);
+      color: #fff;
+      padding: 12px 26px;
+      border-radius: 32px;
+      font-size: 20px;
+      font-weight: 700;
+      letter-spacing: 0.4px;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.65);
+      pointer-events: none;
+      z-index: 25;
+      opacity: 0;
+      will-change: transform, opacity;
+      transition: opacity 0.14s ease, transform 0.14s ease;
+    }
+    .v271-hud svg {
+      width: 26px;
+      height: 26px;
+      fill: none;
+      stroke: #0a84ff;
+      stroke-width: 2.3;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      flex-shrink: 0;
+      color: #0a84ff;
+    }
+    .v271-hud.show {
+      opacity: 1;
+      transform: translate3d(-50%, 0, 0) scale(1);
+    }
+
+    .v271-spinner {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: 64px;
+      height: 64px;
+      margin: -32px 0 0 -32px;
+      border: 5px solid rgba(255, 255, 255, 0.22);
+      border-top-color: #0a84ff;
+      border-radius: 50%;
+      z-index: 2;
+      pointer-events: none;
+      display: none;
+      will-change: transform;
+      animation: v271spin 0.75s linear infinite;
+    }
+    #${CFG.overlayId}.buffering .v271-spinner { display: block; }
+    @keyframes v271spin { to { transform: rotate(360deg); } }
+
+    .v271-btn {
+      background: rgba(18, 18, 24, 0.88);
+      color: #fff;
+      border: 1.5px solid rgba(255, 255, 255, 0.22);
+      border-radius: 50%;
+      width: 56px;
+      height: 56px;
+      min-width: 56px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      pointer-events: auto;
+      cursor: pointer;
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.5);
+      position: relative;
+      z-index: 3;
+      transition: transform 0.12s ease, background 0.15s ease, box-shadow 0.15s ease;
+    }
+    .v271-btn svg {
+      width: 27px;
+      height: 27px;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 2;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      pointer-events: none;
+    }
+
+    .v271-slider {
+      --v271-pct: 0%;
+      appearance: none;
+      -webkit-appearance: none;
+      border-radius: 6px;
+      background: linear-gradient(to right, #0a84ff 0%, #0a84ff var(--v271-pct), rgba(255, 255, 255, 0.35) var(--v271-pct), rgba(255, 255, 255, 0.35) 100%);
+      accent-color: #0a84ff;
+      cursor: pointer;
+      pointer-events: auto;
+      outline: none;
+      transition: transform 0.12s ease;
+    }
+
+    .v271-speed-wrap {
+      display: inline-flex;
+      align-items: center;
+      background: rgba(18, 18, 24, 0.88);
+      border: 1.5px solid rgba(255, 255, 255, 0.22);
+      border-radius: 32px;
+      height: 56px;
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.5);
+      overflow: hidden;
+      pointer-events: auto;
+      position: relative;
+      z-index: 4;
+    }
+    .v271-speed-wrap.expanded {
+      padding-right: 14px;
+      background: rgba(18, 18, 24, 0.96);
+      border-color: rgba(10, 132, 255, 0.75);
+    }
+    #v271-speed-btn {
+      background: transparent;
+      border: 0;
+      box-shadow: none;
+      width: 54px;
+      height: 54px;
+      min-width: 54px;
+      flex-shrink: 0;
+    }
+    .v271-speed-inline {
+      display: none;
+      align-items: center;
+      gap: 12px;
+      width: 220px;
+      margin-left: 4px;
+    }
+    .v271-speed-wrap.expanded .v271-speed-inline { display: inline-flex; }
+    #v271-speed {
+      flex: 1 1 auto;
+      width: 100%;
+      min-width: 0;
+      height: 8px;
+    }
+    #v271-speed::-webkit-slider-thumb {
+      appearance: none;
+      -webkit-appearance: none;
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: #0a84ff;
+      border: 2px solid #fff;
+    }
+    .v271-speed-val {
+      font-size: 15px;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+      color: #0a84ff;
+      min-width: 52px;
+      text-align: center;
+      cursor: pointer;
+      pointer-events: auto;
+      background: rgba(10, 132, 255, 0.18);
+      padding: 4px 8px;
+      border-radius: 10px;
+    }
+
+    .v271-settings-wrap {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      pointer-events: auto;
+      z-index: 30;
+    }
+    .v271-settings-wrap.expanded #v271-settings-btn {
+      background: rgba(10, 132, 255, 0.92);
+      border-color: rgba(255, 255, 255, 0.6);
+    }
+    .v271-settings-panel {
+      display: none;
+      position: absolute;
+      top: calc(100% + 14px);
+      right: 0;
+      width: 390px;
+      max-height: calc(100vh - 110px);
+      overflow-y: auto;
+      background: rgba(16, 16, 22, 0.98);
+      border: 1.5px solid rgba(255, 255, 255, 0.3);
+      border-radius: 20px;
+      padding: 18px 20px;
+      flex-direction: column;
+      gap: 14px;
+      box-shadow: 0 14px 40px rgba(0, 0, 0, 0.9);
+      z-index: 9999;
+      pointer-events: auto;
+    }
+    .v271-settings-wrap.expanded .v271-settings-panel { display: flex; }
+    #${CFG.overlayId}.settings-open .v271-center,
+    #${CFG.overlayId}.settings-open .v271-bottom {
+      opacity: 0.12;
+      pointer-events: none;
+    }
+    .v271-settings-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding-bottom: 10px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.16);
+      font-size: 16px;
+      font-weight: 700;
+      color: #fff;
+    }
+    .v271-settings-title {
+      display: inline-flex;
+      align-items: center;
+      gap: 9px;
+    }
+    .v271-settings-title svg {
+      width: 22px;
+      height: 22px;
+      fill: none;
+      stroke: #0a84ff;
+      stroke-width: 2;
+    }
+    .v271-reset-btn {
+      background: rgba(255, 69, 58, 0.24);
+      color: #ff6961;
+      border: 1px solid rgba(255, 69, 58, 0.45);
+      border-radius: 10px;
+      padding: 6px 12px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .v271-menu-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      width: 100%;
+      padding: 4px 6px;
+    }
+    .v271-menu-label {
+      font-size: 15px;
+      font-weight: 600;
+      color: rgba(255, 255, 255, 0.92);
+      white-space: nowrap;
+    }
+    .v271-stepper {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      border-radius: 12px;
+      padding: 4px 6px;
+    }
+    .v271-step-btn {
+      background: rgba(255, 255, 255, 0.16);
+      color: #fff;
+      border: 0;
+      border-radius: 8px;
+      width: 34px;
+      height: 34px;
+      font-size: 18px;
+      font-weight: 700;
+      line-height: 1;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+    }
+    .v271-step-val {
+      width: 54px;
+      color: #0a84ff;
+      font-size: 15px;
+      font-weight: 700;
+      text-align: center;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .v271-switch {
+      position: relative;
+      display: inline-block;
+      width: 52px;
+      height: 28px;
+      flex-shrink: 0;
+      cursor: pointer;
+    }
+    .v271-switch input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+      position: absolute;
+    }
+    .v271-switch-slider {
+      position: absolute;
+      inset: 0;
+      background: rgba(255, 255, 255, 0.22);
+      border: 1px solid rgba(255, 255, 255, 0.25);
+      border-radius: 28px;
+      transition: background 0.18s ease, border-color 0.18s ease;
+    }
+    .v271-switch-slider::before {
+      content: "";
+      position: absolute;
+      height: 22px;
+      width: 22px;
+      left: 2px;
+      bottom: 2px;
+      background: #fff;
+      border-radius: 50%;
+      transition: transform 0.18s ease;
+    }
+    .v271-switch input:checked + .v271-switch-slider {
+      background: #0a84ff;
+      border-color: #0a84ff;
+    }
+    .v271-switch input:checked + .v271-switch-slider::before {
+      transform: translateX(24px);
+    }
+
+    .v271-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+      padding: 22px 32px 24px 32px;
+      background: linear-gradient(to bottom, rgba(0, 0, 0, 0.85), transparent);
+      position: relative;
+      z-index: 20;
+      width: 100%;
+      pointer-events: none;
+    }
+    .v271-titlebox {
+      flex: 1 1 auto;
+      min-width: 0;
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+    }
+    .v271-title {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 0;
+      white-space: nowrap;
+      overflow: hidden;
+      color: #f5f5f7;
+      font-size: 22px;
+      font-weight: 600;
+      letter-spacing: 0.3px;
+      text-shadow: 0 2px 6px rgba(0, 0, 0, 0.95);
+    }
+    .v271-ep {
+      flex-shrink: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 4px 14px;
+      border-radius: 10px;
+      background: linear-gradient(180deg, #2b9bff 0%, #0a84ff 100%);
+      border: 1.5px solid rgba(255, 255, 255, 0.4);
+      color: #fff;
+      font-size: 16px;
+      font-weight: 800;
+      letter-spacing: 0.4px;
+      line-height: 1.35;
+      box-shadow: 0 2px 8px rgba(10, 132, 255, 0.6);
+    }
+    .v271-title-main {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      color: #f5f5f7;
+      font-weight: 600;
+    }
+    .v271-actions {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      pointer-events: auto;
+      flex-shrink: 0;
+    }
+    .v271-center {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 44px;
+      z-index: 3;
+      pointer-events: none;
+    }
+    .v271-center .v271-btn { width: 72px; height: 72px; min-width: 72px; }
+    .v271-center .v271-btn svg { width: 34px; height: 34px; }
+    .v271-center .v271-play {
+      width: 92px;
+      height: 92px;
+      min-width: 92px;
+      background: rgba(10, 132, 255, 0.92);
+      border-color: rgba(255, 255, 255, 0.35);
+    }
+    .v271-center .v271-play svg { width: 44px; height: 44px; }
+    .v271-bottom {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      padding: 20px 32px 26px 32px;
+      background: linear-gradient(to top, rgba(0, 0, 0, 0.88), transparent);
+      z-index: 3;
+      pointer-events: auto;
+      width: 100%;
+    }
+    .v271-timeline-row {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      width: 100%;
+    }
+    .v271-time {
+      color: #fff;
+      font-size: 18px;
+      font-weight: 600;
+      font-variant-numeric: tabular-nums;
+      min-width: 66px;
+      text-align: center;
+      text-shadow: 0 1px 4px #000;
+    }
+    .v271-range {
+      flex: 1;
+      min-width: 0;
+      height: 10px;
+    }
+    .v271-range::-webkit-slider-thumb {
+      appearance: none;
+      -webkit-appearance: none;
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      background: #0a84ff;
+      border: 3px solid #fff;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.7);
+    }
+    .v271-controls {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      width: 100%;
+    }
+    .v271-pill {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      width: 24%;
+      min-width: 230px;
+      background: rgba(18, 18, 24, 0.88);
+      border: 1.5px solid rgba(255, 255, 255, 0.2);
+      padding: 11px 18px;
+      border-radius: 34px;
+      pointer-events: auto;
+      transition: all 0.15s ease;
+    }
+    .v271-pill svg {
+      width: 24px;
+      height: 24px;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 2.1;
+      flex-shrink: 0;
+    }
+    .v271-pill input[type=range] {
+      flex: 1 1 auto;
+      width: 100%;
+      min-width: 0;
+      height: 8px;
+    }
+    .v271-pill input[type=range]::-webkit-slider-thumb {
+      appearance: none;
+      -webkit-appearance: none;
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      background: #0a84ff;
+      border: 2px solid #fff;
+    }
+    #v271-mute {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: none;
+      border: 0;
+      color: #fff;
+      cursor: pointer;
+      flex-shrink: 0;
+      border-radius: 50%;
+      padding: 4px;
+    }
+    .v271-hint-bar {
+      font-size: 13px;
+      color: rgba(255, 255, 255, 0.72);
+      text-align: center;
+      letter-spacing: 0.3px;
+    }
+  `;
+
+  const RECOVERY_SHADOW_CSS = `
+    :host {
+      all: initial;
+      position: fixed;
+      inset: 0;
+      width: 0;
+      height: 0;
+      z-index: 2147483646;
+      pointer-events: none;
+    }
+    #${CFG.recoveryId} {
+      position: fixed;
+      top: 28px;
+      right: 28px;
+      z-index: 2147483646;
+      background: rgba(10, 132, 255, 0.94);
+      border: 2px solid #ffffff;
+      border-radius: 30px;
+      height: 52px;
+      padding: 0 20px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      color: #fff;
+      font-family: system-ui, -apple-system, sans-serif;
+      font-size: 16px;
+      font-weight: 700;
+      box-shadow: 0 6px 20px rgba(0, 0, 0, 0.65);
+      pointer-events: auto;
+      cursor: pointer;
+      transition: transform 0.15s ease, box-shadow 0.15s ease;
+    }
+    #${CFG.recoveryId}:focus {
+      outline: none;
+      box-shadow: 0 0 0 4px #fff, 0 0 0 7px #0a84ff;
+      transform: scale(1.06);
+    }
+    #${CFG.recoveryId} svg {
+      width: 24px;
+      height: 24px;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 2.2;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      pointer-events: none;
+    }
+  `;
+
+  /* =========================================================
+     5. PLAYBACK, HARDWARE-OVERLAY DIMMER, AUDIO & FULLSCREEN
+  ========================================================= */
+
+  function getCustomSeekSvg(type) {
+    const step = state.seekStep || 30;
+    const fontSize = step >= 100 ? '5.8' : '7.5';
+    if (type === 'back') {
+      return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12.5 3a9 9 0 1 0 8.7 6.6M12.5 3V7M12.5 3L8.5 3"/><text x="12" y="15.5" font-size="${fontSize}" font-weight="bold" text-anchor="middle" fill="currentColor" stroke="none">${step}</text></svg>`;
+    }
+    return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11.5 3a9 9 0 1 1-8.7 6.6M11.5 3V7M11.5 3L15.5 3"/><text x="12" y="15.5" font-size="${fontSize}" font-weight="bold" text-anchor="middle" fill="currentColor" stroke="none">${step}</text></svg>`;
+  }
+
+  function showHud(text, duration = 1100, iconKey = '') {
+    const hud = state.refs?.hud;
+    if (!hud) return;
+    let svgMarkup = '';
+    if (iconKey === 'back' || iconKey === 'next') {
+      svgMarkup = getCustomSeekSvg(iconKey);
+    } else if (iconKey && SVG[iconKey]) {
+      svgMarkup = icon(iconKey);
+    }
+    hud.innerHTML = `${svgMarkup}<span>${escapeHtml(text)}</span>`;
+    hud.classList.add('show');
+    if (state.hudTimer) clearTimeout(state.hudTimer);
+    state.hudTimer = setTimeout(() => {
+      state.hudTimer = 0;
+      hud.classList.remove('show');
+    }, duration);
+  }
+
+  function applyAspectMode(video, modeIndex) {
+    if (!video) return;
+    const mode = ASPECT_MODES[modeIndex] || ASPECT_MODES[0];
+    try {
+      video.setAttribute(CFG.fitAttr, mode.key);
+      video.style.setProperty('object-fit', mode.key, 'important');
+      video.style.setProperty('object-position', 'center center', 'important');
+    } catch (_) {}
+  }
+
+  function styleRangeTrack(inputEl, pct) {
+    if (!inputEl) return;
+    const p = clamp(Number(pct) || 0, 0, 100);
+    inputEl.style.setProperty('--v271-pct', `${p}%`);
+  }
+
+  function applyBrightness(video, val) {
+    if (!video) return;
+    const clamped = clamp(Number(val) || 1, 0.25, 1.75);
+    state.brightness = clamped;
+    const baseFilter = state.originalVideo?.filter || '';
+    const dimmer = state.refs?.dimmer;
+
+    try {
+      if (clamped <= 1) {
+        if (video.style.filter !== baseFilter) {
+          video.style.filter = baseFilter;
+        }
+        if (dimmer) {
+          const dimOpacity = Math.round((1 - clamped) * 0.88 * 1000) / 1000;
+          dimmer.style.opacity = dimOpacity > 0.005 ? String(dimOpacity) : '0';
+        }
+      } else {
+        if (dimmer) dimmer.style.opacity = '0';
+        video.style.filter = `${baseFilter ? baseFilter + ' ' : ''}brightness(${clamped})`;
+      }
+    } catch (_) {}
+
+    if (state.refs?.brightness) {
+      const pct = ((clamped - 0.25) / 1.5) * 100;
+      styleRangeTrack(state.refs.brightness, pct);
+    }
+  }
+
+  function setNativeVolume(video, level) {
+    if (!video) return;
+    const val = clamp(Number(level) || 0, 0, 1);
+    try {
+      video.volume = val;
+      video.muted = val <= 0;
+      if (val > 0) state.lastVolume = val;
+    } catch (_) {}
+    if (state.refs?.volume) {
+      styleRangeTrack(state.refs.volume, val * 100);
+    }
+  }
+
+  function safePlay(video) {
+    if (!video) return;
+    try {
+      const p = video.play();
+      if (p?.catch) {
+        p.catch(() => {
+          setTimeout(() => {
+            try {
+              if (video.paused) {
+                const p2 = video.play();
+                if (p2?.catch) p2.catch(() => {});
+              }
+            } catch (_) {}
+          }, 80);
+        });
+      }
+      if (video.paused) {
+        try {
+          video.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+        } catch (_) {}
+      }
+    } catch (_) {}
+  }
+
+  function isMSEOrBlobStream(video) {
+    const src = video?.currentSrc || video?.src || '';
+    return src.startsWith('blob:') || !src;
+  }
+
+  function safeSeek(video, time, useFastSeek = false) {
+    if (!video || !Number.isFinite(time)) return false;
+    try {
+      let target = Math.max(0, time);
+      const dur = video.duration;
+      if (Number.isFinite(dur) && dur > 0) {
+        target = Math.min(target, Math.max(0, dur - 0.25));
+      } else {
+        const ranges = video.seekable;
+        if (ranges && ranges.length > 0) {
+          const start = ranges.start(0);
+          const end = ranges.end(ranges.length - 1);
+          if (end > 1) target = clamp(target, start, end);
+        }
+      }
+      if (useFastSeek && typeof video.fastSeek === 'function' && !isMSEOrBlobStream(video)) {
+        try {
+          video.fastSeek(target);
+          return true;
+        } catch (_) {}
+      }
+      video.currentTime = target;
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function attemptMediaErrorRecovery(video) {
+    if (!video || !video.error) return;
+    const code = video.error.code;
+    const now = Date.now();
+    if (now - state.lastHealAttemptTs < 2500) return;
+    if (state.healRetryCount >= 4) {
+      dbg('HEAL', `Max retries reached for MediaError ${code}`);
+      return;
+    }
+
+    state.lastHealAttemptTs = now;
+    state.healRetryCount++;
+    const resumeTarget = Math.max(
+      state.lastKnownGoodTime || 0,
+      Number.isFinite(video.currentTime) ? video.currentTime : 0
+    ) + 0.65;
+
+    dbg('HEAL', `Recovering MediaError ${code} -> ${formatTime(resumeTarget)} (#${state.healRetryCount})`);
+    showHud(`กำลังซ่อมแซมสัญญาณภาพอัตโนมัติ...`, 2000, 'settings');
+
+    try {
+      if (isMSEOrBlobStream(video)) {
+        safeSeek(video, resumeTarget, false);
+        setTimeout(() => safePlay(video), 150);
+      } else {
+        const curSrc = video.currentSrc || video.src;
+        if (curSrc) {
+          video.load();
+          video.addEventListener('loadedmetadata', () => {
+            safeSeek(video, resumeTarget, false);
+            safePlay(video);
+          }, { once: true });
+        } else {
+          safeSeek(video, resumeTarget, false);
+          safePlay(video);
+        }
+      }
+    } catch (_) {}
+  }
+
+  function enterUniversalFullscreen(video) {
+    if (!video || isDisqualifiedVideo(video)) return;
+    state.lastActiveVideo = video;
+    const container = ensureSafeContainer(video);
+    if (!container) return;
+
+    removeRecovery();
+    dbg('FS', 'Entering TV Universal Fullscreen');
+
+    if (origReqFS) {
+      try {
+        if (container.hasAttribute('data-tmv271-wrapper')) {
+          container.style.display = 'block';
+        }
+        const res = origReqFS.call(container, { navigationUI: 'hide' });
+        if (res && typeof res.then === 'function') {
+          res.then(() => {
+            setTopWindowIframeFullscreenLock(false);
+            createOverlay(video, container, false);
+          }).catch(() => {
+            setTopWindowIframeFullscreenLock(true);
+            createOverlay(video, container, true);
+          });
+          return;
+        }
+      } catch (_) {}
+    }
+
+    setTopWindowIframeFullscreenLock(true);
+    createOverlay(video, container, true);
+  }
+
+  function exitUniversalFullscreen() {
+    state.expectingSeamlessEpisode = false;
+    clearAutoFullscreenBridge();
+    setTopWindowIframeFullscreenLock(false);
+    releaseWakeLock();
+    if (state.pseudoFullscreen) {
+      destroyController(true);
+      return;
+    }
+    const fs = fullscreenElement();
+    if (fs) {
+      try {
+        const res = document.exitFullscreen?.() ||
+          document.mozCancelFullScreen?.() ||
+          document.webkitExitFullscreen?.();
+        if (res?.catch) res.catch(() => destroyController(true));
+      } catch (_) {
+        destroyController(true);
+      }
+    } else {
+      destroyController(true);
+    }
+  }
+
+  /* =========================================================
+     6. TV FULLSCREEN LAUNCHER BUTTON (FOCUSABLE BY D-PAD)
+  ========================================================= */
+
+  function removeRecovery() {
+    if (state.recoveryHideTimer) {
+      clearTimeout(state.recoveryHideTimer);
+      state.recoveryHideTimer = 0;
+    }
+    document.getElementById(CFG.recoveryHostId)?.remove();
+  }
+
+  function showRecovery(video) {
+    if (
+      !video ||
+      !video.isConnected ||
+      isDisqualifiedVideo(video) ||
+      document.hidden ||
+      fullscreenElement() ||
+      state.pseudoFullscreen ||
+      state.overlay
+    ) return;
+
+    const vArea = area(video);
+    const winArea = window.innerWidth * window.innerHeight;
+    if (vArea < 25000 || (winArea > 0 && vArea / winArea < 0.08)) return;
+
+    installHostStyles();
+    let recHost = document.getElementById(CFG.recoveryHostId);
+    lastRecoveryTime = Date.now();
+
+    if (!recHost) {
+      recHost = document.createElement('div');
+      recHost.id = CFG.recoveryHostId;
+      const shadow = recHost.attachShadow({ mode: 'open' });
+
+      const styleEl = document.createElement('style');
+      styleEl.textContent = RECOVERY_SHADOW_CSS;
+      shadow.appendChild(styleEl);
+
+      const btn = document.createElement('button');
+      btn.id = CFG.recoveryId;
+      btn.type = 'button';
+      btn.tabIndex = 0;
+      btn.setAttribute('aria-label', 'เข้าสู่โหมดเต็มจอ TV');
+      btn.innerHTML = `${icon('enter')}<span>เต็มจอ TV</span>`;
+
+      btn.addEventListener('click', e => {
+        e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+
+        const targetVideo = (state.lastActiveVideo?.isConnected && area(state.lastActiveVideo) > 0 && !isDisqualifiedVideo(state.lastActiveVideo))
+          ? state.lastActiveVideo
+          : bestVideo();
+        removeRecovery();
+        if (targetVideo) enterUniversalFullscreen(targetVideo);
+      }, { capture: true });
+
+      shadow.appendChild(btn);
+      (document.body || document.documentElement)?.appendChild(recHost);
+      broadcastHideRecovery();
+    } else {
+      broadcastHideRecovery();
+    }
+
+    if (state.recoveryHideTimer) clearTimeout(state.recoveryHideTimer);
+    state.recoveryHideTimer = setTimeout(() => {
+      state.recoveryHideTimer = 0;
+      recHost?.remove();
+    }, 6000);
+  }
+
+  /* =========================================================
+     7. CONTAINER & VIDEO STATE RESTORATION
+  ========================================================= */
+
+  function suppressHostAndNativeControls(video, container, isPseudo) {
+    state.originalVideo = {
+      objectFit: video.style.getPropertyValue('object-fit'),
+      objectFitPriority: video.style.getPropertyPriority('object-fit'),
+      objectPosition: video.style.getPropertyValue('object-position'),
+      objectPositionPriority: video.style.getPropertyPriority('object-position'),
+      filter: video.style.filter,
+      controlsProp: Boolean(video.controls),
+      controlsAttr: video.getAttribute('controls')
+    };
+
+    try {
+      video.controls = false;
+      video.removeAttribute('controls');
+      video.setAttribute(CFG.videoAttr, '1');
+      applyAspectMode(video, state.aspectIndex);
+    } catch (_) {}
+
+    state.originalPosition = null;
+    state.changedPosition = false;
+    state.pseudoFullscreen = Boolean(isPseudo);
+
+    try {
+      container.setAttribute(CFG.hostAttr, '1');
+      if (isPseudo) {
+        container.setAttribute(CFG.pseudoAttr, '1');
+        document.documentElement.setAttribute(CFG.lockScrollAttr, '1');
+        setTopWindowIframeFullscreenLock(true);
+      } else if (getComputedStyle(container).position === 'static') {
+        state.originalPosition = {
+          value: container.style.getPropertyValue('position'),
+          priority: container.style.getPropertyPriority('position')
+        };
+        container.style.setProperty('position', 'relative', 'important');
+        state.changedPosition = true;
+      }
+    } catch (_) {}
+  }
+
+  function restoreHostAndNativeControls() {
+    const video = state.video;
+    const origV = state.originalVideo;
+
+    if (video) {
+      try {
+        video.removeAttribute(CFG.videoAttr);
+        video.removeAttribute(CFG.fitAttr);
+        if (origV) {
+          if (origV.objectFit) {
+            video.style.setProperty('object-fit', origV.objectFit, origV.objectFitPriority);
+          } else {
+            video.style.removeProperty('object-fit');
+          }
+          if (origV.objectPosition) {
+            video.style.setProperty('object-position', origV.objectPosition, origV.objectPositionPriority);
+          } else {
+            video.style.removeProperty('object-position');
+          }
+          video.style.filter = origV.filter;
+          if (origV.controlsAttr !== null) {
+            video.setAttribute('controls', origV.controlsAttr);
+          }
+          if (origV.controlsProp) {
+            video.controls = true;
+          }
+        }
+      } catch (_) {}
+    }
+
+    const container = state.container;
+    if (container) {
+      try {
+        container.removeAttribute(CFG.hostAttr);
+        container.removeAttribute(CFG.pseudoAttr);
+        if (state.changedPosition && state.originalPosition) {
+          if (state.originalPosition.value) {
+            container.style.setProperty('position', state.originalPosition.value, state.originalPosition.priority);
+          } else {
+            container.style.removeProperty('position');
+          }
+        }
+        if (container.hasAttribute('data-tmv271-wrapper')) {
+          container.style.display = 'contents';
+        }
+      } catch (_) {}
+    }
+
+    document.documentElement.removeAttribute(CFG.lockScrollAttr);
+    setTopWindowIframeFullscreenLock(false);
+    state.originalVideo = null;
+    state.originalPosition = null;
+    state.changedPosition = false;
+    state.pseudoFullscreen = false;
+  }
+
+  /* =========================================================
+     8. OVERLAY LIFECYCLE & MULTI-LAYER TV REMOTE ENGINE
+  ========================================================= */
+
+  function clearHide() {
+    if (state.hideTimer) clearTimeout(state.hideTimer);
+    state.hideTimer = 0;
+  }
+
+  function clearSpeedHide() {
+    if (state.speedHideTimer) clearTimeout(state.speedHideTimer);
+    state.speedHideTimer = 0;
+  }
+
+  function clearSettingsHide() {
+    if (state.settingsHideTimer) clearTimeout(state.settingsHideTimer);
+    state.settingsHideTimer = 0;
+  }
+
+  function collapseSpeedSlider() {
+    clearSpeedHide();
+    state.refs?.speedWrap?.classList.remove('expanded');
+  }
+
+  function collapseSettingsPanel() {
+    clearSettingsHide();
+    state.refs?.settingsWrap?.classList.remove('expanded');
+    state.overlay?.classList.remove('settings-open');
+  }
+
+  function collapseAllMenus() {
+    collapseSpeedSlider();
+    collapseSettingsPanel();
+  }
+
+  function cancelProgress() {
+    if (state.progressFrame) cancelAnimationFrame(state.progressFrame);
+    state.progressFrame = 0;
+  }
+
+  function visibleUI() {
+    return !!(
+      state.overlay &&
+      state.refs &&
+      !state.seeking &&
+      !document.hidden &&
+      !state.overlay.classList.contains('hidden-ui')
+    );
+  }
+
+  function updateSpeedTrackVisual() {
+    if (!state.refs?.speedInput) return;
+    const val = Number(state.refs.speedInput.value) || 1;
+    const span = Math.max(0.1, state.maxSpeed - state.minSpeed);
+    const pct = ((val - state.minSpeed) / span) * 100;
+    styleRangeTrack(state.refs.speedInput, pct);
+  }
+
+  function updateProgress(force = false) {
+    const video = state.video;
+    const refs = state.refs;
+    if (!video || !refs || state.seeking) return;
+    if (!force && !visibleUI()) return;
+
+    const now = performance.now();
+    if (!force && now - state.lastProgressUpdateTs < 180) return;
+    state.lastProgressUpdateTs = now;
+
+    const current = Number.isFinite(video.currentTime) ? video.currentTime : 0;
+    const second = Math.floor(current);
+
+    if (force || refs.lastSecond !== second) {
+      refs.lastSecond = second;
+      refs.current.textContent = formatTime(current);
+      if (state.debugEnabled) renderDebugConsole();
+    }
+
+    const duration = video.duration;
+    if (!Number.isFinite(duration) || duration <= 0) {
+      if (refs.lastDuration !== -1) {
+        refs.lastDuration = -1;
+        refs.duration.textContent = 'LIVE';
+        refs.timeline.disabled = true;
+        refs.timeline.value = '0';
+        styleRangeTrack(refs.timeline, 0);
+      }
+      return;
+    }
+
+    refs.timeline.disabled = false;
+    const percent = clamp((current / duration) * 100, 0, 100);
+    const rounded = Math.round(percent * 10) / 10;
+
+    if (force || refs.lastPercent !== rounded) {
+      refs.lastPercent = rounded;
+      refs.timeline.value = String(rounded);
+      styleRangeTrack(refs.timeline, rounded);
+    }
+
+    const durSec = Math.floor(duration);
+    if (force || refs.lastDuration !== durSec) {
+      refs.lastDuration = durSec;
+      refs.duration.textContent = formatTime(duration);
+    }
+  }
+
+  function queueProgress(force = false) {
+    if (!state.refs) return;
+    if (force) {
+      cancelProgress();
+      updateProgress(true);
+      return;
+    }
+    if (!visibleUI() || state.progressFrame) return;
+    state.progressFrame = requestAnimationFrame(() => {
+      state.progressFrame = 0;
+      updateProgress();
+    });
+  }
+
+  function resetAutoHide() {
+    const overlay = state.overlay;
+    if (!overlay) return;
+
+    clearHide();
+    overlay.classList.remove('hidden-ui');
+    queueProgress(true);
+
+    if (
+      state.seeking ||
+      state.interactingSlider ||
+      document.hidden ||
+      overlay.classList.contains('settings-open')
+    ) return;
+
+    state.hideTimer = setTimeout(() => {
+      state.hideTimer = 0;
+      if (
+        state.overlay !== overlay ||
+        state.seeking ||
+        state.interactingSlider ||
+        overlay.classList.contains('settings-open')
+      ) return;
+      collapseAllMenus();
+      overlay.classList.add('hidden-ui');
+      cancelProgress();
+    }, CFG.hideDelay);
+  }
+
+  function addEvent(target, type, handler, options, abortCtrl = state.abort) {
+    if (!target || !abortCtrl) return;
+    try {
+      target.addEventListener(type, handler, {
+        ...(options || {}),
+        signal: abortCtrl.signal
+      });
+    } catch (_) {}
+  }
+
+  function detachOverlay() {
+    clearHide();
+    clearSpeedHide();
+    clearSettingsHide();
+    cancelProgress();
+    stopAdWatcher();
+    if (state.focusKeeperTimer) clearInterval(state.focusKeeperTimer);
+    if (state.hudTimer) clearTimeout(state.hudTimer);
+    if (state.observerRaf) cancelAnimationFrame(state.observerRaf);
+    state.focusKeeperTimer = 0;
+    state.hudTimer = 0;
+    state.observerRaf = 0;
+
+    if (state.videoObserver) {
+      state.videoObserver.disconnect();
+      state.videoObserver = null;
+    }
+    if (state.containerObserver) {
+      state.containerObserver.disconnect();
+      state.containerObserver = null;
+    }
+
+    try { state.videoAbort?.abort(); } catch (_) {}
+    try { state.abort?.abort(); } catch (_) {}
+
+    state.videoAbort = null;
+    state.abort = null;
+    state.shadowHost?.remove();
+    state.shadowHost = null;
+    state.shadowRoot = null;
+    state.overlay = null;
+    state.refs = null;
+    state.focusedEl = null;
+    state.seeking = false;
+    state.interactingSlider = false;
+    invalidateBestVideoCache();
+  }
+
+  function destroyController(showQuickBtn = false) {
+    releaseWakeLock();
+    stopAdWatcher();
+    if (state.autoPlayPollTimer) {
+      clearInterval(state.autoPlayPollTimer);
+      state.autoPlayPollTimer = 0;
+    }
+    if (state.epScrollTimer) {
+      clearTimeout(state.epScrollTimer);
+      state.epScrollTimer = 0;
+    }
+    const video = state.video || state.lastActiveVideo;
+    if (video) savePlaybackPosition(video, true);
+    detachOverlay();
+    restoreHostAndNativeControls();
+    state.video = null;
+    state.container = null;
+
+    if (showQuickBtn && video && !document.hidden) {
+      showRecovery(video);
+    }
+  }
+
+  /* --- Unified Remote Command Processor (Handles Keydown, Keyup & Cross-Frame PostMessage) --- */
+  function normalizeRemoteCommand(e) {
+    if (!e) return '';
+    const key = e.key || '';
+    const code = e.code || '';
+    const kc = e.keyCode || e.which || 0;
+
+    if (key === 'ArrowUp' || code === 'ArrowUp' || kc === 19 || kc === 38) return 'UP';
+    if (key === 'ArrowDown' || code === 'ArrowDown' || kc === 20 || kc === 40) return 'DOWN';
+    if (key === 'ArrowLeft' || code === 'ArrowLeft' || kc === 21 || kc === 37) return 'LEFT';
+    if (key === 'ArrowRight' || code === 'ArrowRight' || kc === 22 || kc === 39) return 'RIGHT';
+    if (key === 'Enter' || code === 'Enter' || code === 'NumpadEnter' || key === ' ' || code === 'Space' || key === 'Select' || kc === 23 || kc === 66 || kc === 13 || kc === 32) return 'OK';
+    if (key === 'Escape' || key === 'Backspace' || key === 'GoBack' || key === 'BrowserBack' || code === 'Escape' || kc === 4 || kc === 27 || kc === 10009) return 'BACK';
+    if (key === 'MediaPlayPause' || kc === 85 || kc === 179) return 'MEDIA_PLAY_PAUSE';
+    if (key === 'MediaFastForward' || kc === 90 || kc === 228) return 'MEDIA_FF';
+    if (key === 'MediaRewind' || kc === 89 || kc === 227) return 'MEDIA_RW';
+    if (key === 'MediaTrackNext' || key === 'ChannelUp' || kc === 87 || kc === 166) return 'MEDIA_NEXT';
+    return '';
+  }
+
+  function processRemoteCommand(cmd, originalEvent) {
+    if (!cmd || !state.overlay || !state.video) return false;
+
+    const now = performance.now();
+    // Deduplicate identical command fired across keydown + keyup or window + document within 110ms
+    if (state.lastKeyHandledSig === cmd && (now - state.lastKeyHandledTs) < 110) {
+      if (originalEvent) {
+        try { originalEvent.preventDefault(); originalEvent.stopImmediatePropagation(); } catch (_) {}
+      }
+      return true;
+    }
+    state.lastKeyHandledSig = cmd;
+    state.lastKeyHandledTs = now;
+
+    if (originalEvent) {
+      try {
+        originalEvent.preventDefault();
+        originalEvent.stopPropagation();
+        originalEvent.stopImmediatePropagation();
+      } catch (_) {}
+    }
+
+    dbg('REMOTE', `CMD: ${cmd} (UI Hidden: ${state.overlay.classList.contains('hidden-ui')})`);
+
+    const overlay = state.overlay;
+    const refs = state.refs;
+    const uiHidden = overlay.classList.contains('hidden-ui');
+
+    // Dedicated TV Media Keys
+    if (cmd === 'MEDIA_PLAY_PAUSE') {
+      if (state.video.paused) { clickPlayerBigPlayButton(); safePlay(state.video); showHud('เล่น', 900, 'play'); }
+      else { state.video.pause(); showHud('หยุด', 900, 'pause'); }
+      resetAutoHide();
+      return true;
+    }
+    if (cmd === 'MEDIA_FF') {
+      const step = state.seekStep;
+      safeSeek(state.video, state.video.currentTime + step, false);
+      showHud(`+${step} วินาที`, 950, 'next');
+      return true;
+    }
+    if (cmd === 'MEDIA_RW') {
+      const step = state.seekStep;
+      safeSeek(state.video, state.video.currentTime - step, false);
+      showHud(`-${step} วินาที`, 950, 'back');
+      return true;
+    }
+    if (cmd === 'MEDIA_NEXT') {
+      triggerSeamlessNextEpisode(true);
+      return true;
+    }
+
+    // CASE A: UI is HIDDEN -> Direct Video Remote Shortcuts (Zero-Friction)
+    if (uiHidden) {
+      if (cmd === 'LEFT') {
+        const step = state.seekStep;
+        safeSeek(state.video, state.video.currentTime - step, false);
+        showHud(`-${step} วินาที (${formatTime(state.video.currentTime)})`, 1100, 'back');
+        return true;
+      }
+      if (cmd === 'RIGHT') {
+        const step = state.seekStep;
+        safeSeek(state.video, state.video.currentTime + step, false);
+        showHud(`+${step} วินาที (${formatTime(state.video.currentTime)})`, 1100, 'next');
+        return true;
+      }
+      if (cmd === 'UP') {
+        const curV = state.video.muted ? 0 : state.video.volume;
+        const nextV = clamp(Math.round((curV + 0.1) * 100) / 100, 0, 1);
+        setNativeVolume(state.video, nextV);
+        refs?.updateVolumeIcon?.();
+        showHud(`ระดับเสียง ${Math.round(nextV * 100)}%`, 900, 'volume');
+        return true;
+      }
+      if (cmd === 'DOWN') {
+        const curV = state.video.muted ? 0 : state.video.volume;
+        const nextV = clamp(Math.round((curV - 0.1) * 100) / 100, 0, 1);
+        setNativeVolume(state.video, nextV);
+        refs?.updateVolumeIcon?.();
+        showHud(`ระดับเสียง ${Math.round(nextV * 100)}%`, 900, nextV <= 0 ? 'mute' : 'volume');
+        return true;
+      }
+      if (cmd === 'OK') {
+        if (state.video.paused) {
+          clickPlayerBigPlayButton();
+          safePlay(state.video);
+          showHud('เล่น', 900, 'play');
+        } else {
+          state.video.pause();
+          showHud('หยุดชั่วคราว', 900, 'pause');
+        }
+        resetAutoHide();
+        if (refs?.playBtn) refs.setTvFocus?.(refs.playBtn);
+        return true;
+      }
+      if (cmd === 'BACK') {
+        exitUniversalFullscreen();
+        return true;
+      }
+      return false;
+    }
+
+    // CASE B: UI is VISIBLE -> Spatial D-Pad Menu Navigation & Slider Adjustment
+    if (cmd === 'BACK') {
+      if (overlay.classList.contains('settings-open')) {
+        collapseSettingsPanel();
+        if (refs?.settingsBtn) refs.setTvFocus?.(refs.settingsBtn);
+        resetAutoHide();
+      } else if (refs?.speedWrap?.classList.contains('expanded')) {
+        collapseSpeedSlider();
+        if (refs?.speedBtn) refs.setTvFocus?.(refs.speedBtn);
+        resetAutoHide();
+      } else {
+        collapseAllMenus();
+        overlay.classList.add('hidden-ui');
+        clearHide();
+        cancelProgress();
+      }
+      return true;
+    }
+
+    // Handle Left/Right directly on focused Range Sliders (Timeline, Speed, Brightness, Volume)
+    if ((cmd === 'LEFT' || cmd === 'RIGHT') && state.focusedEl && state.focusedEl.tagName === 'INPUT' && state.focusedEl.type === 'range') {
+      const slider = state.focusedEl;
+      const delta = cmd === 'RIGHT' ? 1 : -1;
+
+      if (slider === refs?.timeline) {
+        const step = state.seekStep;
+        safeSeek(state.video, state.video.currentTime + delta * step, false);
+        updateProgress(true);
+        showHud(`${delta > 0 ? '+' : '-'}${step} วินาที (${formatTime(state.video.currentTime)})`, 950, delta > 0 ? 'next' : 'back');
+      } else {
+        const stepAttr = Number(slider.step) || 0.05;
+        const minAttr = Number(slider.min) || 0;
+        const maxAttr = Number(slider.max) || 1;
+        const nextVal = clamp(Math.round((Number(slider.value) + delta * stepAttr) * 100) / 100, minAttr, maxAttr);
+        slider.value = String(nextVal);
+        slider.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+      resetAutoHide();
+      return true;
+    }
+
+    if (cmd === 'UP' || cmd === 'DOWN' || cmd === 'LEFT' || cmd === 'RIGHT') {
+      refs?.moveTvFocus?.(cmd.toLowerCase());
+      if (overlay.classList.contains('settings-open')) {
+        refs?.scheduleSettingsCollapse?.(8000);
+      } else {
+        resetAutoHide();
+      }
+      return true;
+    }
+
+    if (cmd === 'OK') {
+      const target = state.focusedEl || refs?.playBtn;
+      if (!target) return true;
+      if (target.tagName === 'INPUT' && target.type === 'checkbox') {
+        target.checked = !target.checked;
+        target.dispatchEvent(new Event('change', { bubbles: true }));
+      } else if (target === refs?.timeline) {
+        if (state.video.paused) { clickPlayerBigPlayButton(); safePlay(state.video); }
+        else { state.video.pause(); }
+        resetAutoHide();
+      } else {
+        target.click();
+      }
+      return true;
+    }
+
+    return false;
+  }
+
+  function createOverlay(video, container, isPseudo = false) {
+    if (!isVideo(video) || !container || !video.isConnected || isDisqualifiedVideo(video)) return;
+
+    if (
+      state.video === video &&
+      state.container === container &&
+      state.shadowHost?.isConnected
+    ) return;
+
+    destroyController(false);
+    loadPrefs();
+    installHostStyles(container.ownerDocument || document);
+    removeRecovery();
+
+    state.video = video;
+    state.lastActiveVideo = video;
+    state.container = container;
+    state.seeking = false;
+    state.interactingSlider = false;
+    state.lastVolume = video.volume > 0 ? video.volume : 1;
+
+    suppressHostAndNativeControls(video, container, isPseudo);
+    const currentTitle = refreshTitleCache(false);
+    if (!video.paused) requestWakeLock();
+
+    const initialSpeed = Math.round(clamp(Number(video.playbackRate) || 1, state.minSpeed, state.maxSpeed) * 100) / 100;
+    state.savedSpeed = initialSpeed;
+    CFG.seekStep = state.seekStep;
+    const initialVol = video.muted ? 0 : clamp(video.volume, 0, 1);
+
+    const shadowHost = document.createElement('div');
+    shadowHost.id = CFG.shadowHostId;
+    shadowHost.tabIndex = -1;
+    const shadowRoot = shadowHost.attachShadow({ mode: 'open' });
+
+    const shadowStyle = document.createElement('style');
+    shadowStyle.textContent = SHADOW_UI_CSS;
+    shadowRoot.appendChild(shadowStyle);
+
+    const overlay = document.createElement('div');
+    overlay.id = CFG.overlayId;
+    overlay.tabIndex = -1;
+
+    overlay.innerHTML = `
+      <div class="v271-dimmer" id="v271-dimmer"></div>
+      <div class="v271-backdrop"></div>
+      <div class="v271-debug${state.debugEnabled ? ' active' : ''}" id="v271-debug">
+        <div class="v271-debug-head">
+          <span id="v271-debug-head-txt">OMNIFORGE V27.1-TV</span>
+          <button type="button" class="v271-debug-clear" id="v271-debug-clear">Clear</button>
+        </div>
+        <div class="v271-debug-body" id="v271-debug-body"></div>
+      </div>
+      <div class="v271-hud" id="v271-hud"></div>
+      <div class="v271-spinner"></div>
+      <div class="v271-top v271-ui">
+        <div class="v271-titlebox"><span class="v271-title" id="v271-title"></span></div>
+        <div class="v271-actions">
+          <button class="v271-btn tv-focusable" data-row="top" id="v271-next-ep" type="button" aria-label="ตอนถัดไป">${icon('nextEp')}</button>
+          <div class="v271-speed-wrap" id="v271-speed-wrap">
+            <button class="v271-btn tv-focusable" data-row="top" id="v271-speed-btn" type="button" aria-label="ความเร็ววิดีโอ">${icon('rocket')}</button>
+            <div class="v271-speed-inline" id="v271-speed-inline">
+              <input type="range" class="v271-slider tv-focusable" data-row="top" id="v271-speed" min="${state.minSpeed}" max="${state.maxSpeed}" step="0.05" value="${initialSpeed}" aria-label="แถบปรับความเร็ว">
+              <span class="v271-speed-val tv-focusable" data-row="top" tabindex="0" id="v271-speed-val">${formatSpeed(initialSpeed)}</span>
+            </div>
+          </div>
+          <div class="v271-settings-wrap" id="v271-settings-wrap">
+            <button class="v271-btn tv-focusable" data-row="top" id="v271-settings-btn" type="button" aria-label="ตั้งค่า">${icon('settings')}</button>
+            <div class="v271-settings-panel" id="v271-settings-panel">
+              <div class="v271-settings-header">
+                <span class="v271-settings-title">${icon('tv')}<span>ตั้งค่ารีโมท TV</span></span>
+                <button type="button" class="v271-reset-btn tv-focusable" data-row="settings" id="v271-reset-defaults">คืนค่าเริ่มต้น</button>
+              </div>
+              <div class="v271-menu-row">
+                <span class="v271-menu-label">กดซ้าย/ขวา เลื่อนเวลา (±วิ)</span>
+                <div class="v271-stepper">
+                  <button type="button" class="v271-step-btn tv-focusable" data-row="settings" id="v271-dtstep-dec">−</button>
+                  <span class="v271-step-val" id="v271-dtstep-val">${state.seekStep}s</span>
+                  <button type="button" class="v271-step-btn tv-focusable" data-row="settings" id="v271-dtstep-inc">+</button>
+                </div>
+              </div>
+              <div class="v271-menu-row">
+                <span class="v271-menu-label">ความเร็วสูงสุดปุ่มจรวด</span>
+                <div class="v271-stepper">
+                  <button type="button" class="v271-step-btn tv-focusable" data-row="settings" id="v271-maxspeed-dec">−</button>
+                  <span class="v271-step-val" id="v271-maxspeed-val">${state.maxSpeed}x</span>
+                  <button type="button" class="v271-step-btn tv-focusable" data-row="settings" id="v271-maxspeed-inc">+</button>
+                </div>
+              </div>
+              <div class="v271-menu-row" style="padding-top:8px;border-top:1px solid rgba(255,255,255,0.12);">
+                <span class="v271-menu-label">เล่น EP ถัดไปอัตโนมัติ</span>
+                <label class="v271-switch">
+                  <input type="checkbox" class="tv-focusable" data-row="settings" id="v271-autonext-toggle"${state.autoNextEnabled ? ' checked' : ''}>
+                  <span class="v271-switch-slider"></span>
+                </label>
+              </div>
+              <div class="v271-menu-row">
+                <span class="v271-menu-label">รับชมต่อจากที่ดูค้างไว้</span>
+                <label class="v271-switch">
+                  <input type="checkbox" class="tv-focusable" data-row="settings" id="v271-resume-toggle"${state.resumeEnabled ? ' checked' : ''}>
+                  <span class="v271-switch-slider"></span>
+                </label>
+              </div>
+              <div class="v271-menu-row">
+                <span class="v271-menu-label">แสดงสถานะระบบ (Debug)</span>
+                <label class="v271-switch">
+                  <input type="checkbox" class="tv-focusable" data-row="settings" id="v271-debug-toggle"${state.debugEnabled ? ' checked' : ''}>
+                  <span class="v271-switch-slider"></span>
+                </label>
+              </div>
+            </div>
+          </div>
+          <button class="v271-btn tv-focusable" data-row="top" id="v271-aspect" type="button" aria-label="สัดส่วนภาพ">${icon('aspect')}</button>
+          <button class="v271-btn tv-focusable" data-row="top" id="v271-exit" type="button" aria-label="ออกจากเต็มจอ">${icon('exit')}</button>
+        </div>
+      </div>
+      <div class="v271-center v271-ui">
+        <button class="v271-btn tv-focusable" data-row="center" id="v271-back" type="button" aria-label="ย้อนหลัง">${icon('back')}</button>
+        <button class="v271-btn v271-play tv-focusable" data-row="center" id="v271-play" type="button" aria-label="เล่น/หยุด">${icon(video.paused ? 'play' : 'pause')}</button>
+        <button class="v271-btn tv-focusable" data-row="center" id="v271-next" type="button" aria-label="เดินหน้า">${icon('next')}</button>
+      </div>
+      <div class="v271-bottom v271-ui">
+        <div class="v271-timeline-row">
+          <span class="v271-time" id="v271-current">00:00</span>
+          <input class="v271-range v271-slider tv-focusable" data-row="timeline" id="v271-timeline" type="range" min="0" max="100" value="0" step="0.5" aria-label="เส้นเวลาวิดีโอ">
+          <span class="v271-time" id="v271-duration">LIVE</span>
+        </div>
+        <div class="v271-controls">
+          <div class="v271-pill">${icon('sun')}
+            <input type="range" class="v271-slider tv-focusable" data-row="bottom" id="v271-brightness" min="0.25" max="1.75" step="0.05" value="${state.brightness}" aria-label="ความสว่าง">
+          </div>
+          <div class="v271-hint-bar">รีโมท: ซ้าย/ขวา = กรอ • ขึ้น/ลง = เสียง • OK = เล่น/หยุด • Back = ปิดเมนู</div>
+          <div class="v271-pill">
+            <button id="v271-mute" class="tv-focusable" data-row="bottom" type="button" aria-label="ปิดเสียง">${icon(video.muted || video.volume === 0 ? 'mute' : 'volume')}</button>
+            <input type="range" class="v271-slider tv-focusable" data-row="bottom" id="v271-volume" min="0" max="1" step="0.05" value="${initialVol}" aria-label="ระดับเสียง">
+          </div>
+        </div>
+      </div>
+    `;
+
+    shadowRoot.appendChild(overlay);
+    state.shadowHost = shadowHost;
+    state.shadowRoot = shadowRoot;
+    state.overlay = overlay;
+    state.abort = new AbortController();
+
+    const $ = sel => overlay.querySelector(sel);
+    const dimmer = $('#v271-dimmer');
+    const backdrop = $('.v271-backdrop');
+    const debugBox = $('#v271-debug');
+    const debugHeadTxt = $('#v271-debug-head-txt');
+    const debugBody = $('#v271-debug-body');
+    const debugClearBtn = $('#v271-debug-clear');
+    const hud = $('#v271-hud');
+    const nextEpBtn = $('#v271-next-ep');
+    const playBtn = $('#v271-play');
+    const backBtn = $('#v271-back');
+    const nextBtn = $('#v271-next');
+    const speedWrap = $('#v271-speed-wrap');
+    const speedBtn = $('#v271-speed-btn');
+    const speedInput = $('#v271-speed');
+    const speedVal = $('#v271-speed-val');
+    const settingsWrap = $('#v271-settings-wrap');
+    const settingsBtn = $('#v271-settings-btn');
+    const settingsPanel = $('#v271-settings-panel');
+    const resetDefaultsBtn = $('#v271-reset-defaults');
+    const dtStepDec = $('#v271-dtstep-dec');
+    const dtStepInc = $('#v271-dtstep-inc');
+    const dtStepVal = $('#v271-dtstep-val');
+    const maxSpeedDec = $('#v271-maxspeed-dec');
+    const maxSpeedInc = $('#v271-maxspeed-inc');
+    const maxSpeedVal = $('#v271-maxspeed-val');
+    const autoNextToggle = $('#v271-autonext-toggle');
+    const resumeToggle = $('#v271-resume-toggle');
+    const debugToggle = $('#v271-debug-toggle');
+    const aspectBtn = $('#v271-aspect');
+    const exitBtn = $('#v271-exit');
+    const timeline = $('#v271-timeline');
+    const currentLabel = $('#v271-current');
+    const durationLabel = $('#v271-duration');
+    const brightness = $('#v271-brightness');
+    const volume = $('#v271-volume');
+    const muteBtn = $('#v271-mute');
+    const titleLabel = $('.v271-title');
+
+    /* --- Spatial D-Pad Focus Management --- */
+    function isElementVisible(el) {
+      if (!el || el.disabled) return false;
+      const rect = el.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0;
+    }
+
+    function setTvFocus(el) {
+      if (!el || !isElementVisible(el)) return;
+      if (state.focusedEl && state.focusedEl !== el) {
+        state.focusedEl.classList.remove('tv-focused');
+      }
+      state.focusedEl = el;
+      el.classList.add('tv-focused');
+      try {
+        window.focus();
+        el.focus({ preventScroll: true });
+      } catch (_) {}
+      el.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
+    }
+
+    function getFocusableGroups() {
+      if (overlay.classList.contains('settings-open')) {
+        const items = Array.from(settingsPanel.querySelectorAll('.tv-focusable')).filter(isElementVisible);
+        return { mode: 'settings', items };
+      }
+      const top = Array.from(overlay.querySelectorAll('[data-row="top"].tv-focusable')).filter(isElementVisible);
+      const center = Array.from(overlay.querySelectorAll('[data-row="center"].tv-focusable')).filter(isElementVisible);
+      const tl = isElementVisible(timeline) ? [timeline] : [];
+      const bottom = Array.from(overlay.querySelectorAll('[data-row="bottom"].tv-focusable')).filter(isElementVisible);
+      return { mode: 'main', rows: [top, center, tl, bottom].filter(r => r.length > 0) };
+    }
+
+    function moveTvFocus(dir) {
+      const groups = getFocusableGroups();
+      if (groups.mode === 'settings') {
+        const items = groups.items;
+        if (!items.length) return;
+        let idx = items.indexOf(state.focusedEl);
+        if (idx < 0) idx = 0;
+        else if (dir === 'down' || dir === 'right') idx = (idx + 1) % items.length;
+        else if (dir === 'up' || dir === 'left') idx = (idx - 1 + items.length) % items.length;
+        setTvFocus(items[idx]);
+        return;
+      }
+
+      const rows = groups.rows;
+      if (!rows.length) return;
+
+      let rIdx = -1;
+      let cIdx = -1;
+      for (let r = 0; r < rows.length; r++) {
+        const found = rows[r].indexOf(state.focusedEl);
+        if (found >= 0) {
+          rIdx = r;
+          cIdx = found;
+          break;
+        }
+      }
+
+      if (rIdx === -1) {
+        setTvFocus(playBtn);
+        return;
+      }
+
+      if (dir === 'left') {
+        const row = rows[rIdx];
+        setTvFocus(row[(cIdx - 1 + row.length) % row.length]);
+      } else if (dir === 'right') {
+        const row = rows[rIdx];
+        setTvFocus(row[(cIdx + 1) % row.length]);
+      } else if (dir === 'up') {
+        const nextR = Math.max(0, rIdx - 1);
+        const targetRow = rows[nextR];
+        const ratio = rows[rIdx].length > 1 ? cIdx / (rows[rIdx].length - 1) : 0.5;
+        const targetC = Math.round(ratio * (targetRow.length - 1));
+        setTvFocus(targetRow[clamp(targetC, 0, targetRow.length - 1)]);
+      } else if (dir === 'down') {
+        const nextR = Math.min(rows.length - 1, rIdx + 1);
+        const targetRow = rows[nextR];
+        const ratio = rows[rIdx].length > 1 ? cIdx / (rows[rIdx].length - 1) : 0.5;
+        const targetC = Math.round(ratio * (targetRow.length - 1));
+        setTvFocus(targetRow[clamp(targetC, 0, targetRow.length - 1)]);
+      }
+    }
+
+    function updatePlayIcon() {
+      if (state.overlay !== overlay || !state.video) return;
+      playBtn.innerHTML = icon(state.video.paused ? 'play' : 'pause');
+    }
+
+    function updateVolumeIcon() {
+      if (state.overlay !== overlay || !state.video) return;
+      const curVol = state.video.muted ? 0 : clamp(state.video.volume, 0, 1);
+      muteBtn.innerHTML = icon(curVol <= 0 ? 'mute' : 'volume');
+      if (state.refs?.volume) {
+        state.refs.volume.value = String(curVol);
+        styleRangeTrack(state.refs.volume, curVol * 100);
+      }
+    }
+
+    function scheduleSettingsCollapse(delay = 8000) {
+      clearSettingsHide();
+      state.settingsHideTimer = setTimeout(() => {
+        state.settingsHideTimer = 0;
+        settingsWrap.classList.remove('expanded');
+        overlay.classList.remove('settings-open');
+        setTvFocus(settingsBtn);
+        resetAutoHide();
+      }, delay);
+    }
+
+    state.refs = {
+      dimmer,
+      debugBox,
+      debugHeadTxt,
+      debugBody,
+      title: titleLabel,
+      current: currentLabel,
+      duration: durationLabel,
+      timeline,
+      speedWrap,
+      speedBtn,
+      settingsWrap,
+      settingsBtn,
+      playBtn,
+      speedInput,
+      speedVal,
+      brightness,
+      volume,
+      hud,
+      setTvFocus,
+      moveTvFocus,
+      updateVolumeIcon,
+      scheduleSettingsCollapse,
+      lastSecond: -1,
+      lastPercent: -1,
+      lastDuration: -2
+    };
+
+    setTitleUI(currentTitle, state.currentEp);
+    applyBrightness(video, state.brightness);
+    styleRangeTrack(volume, initialVol * 100);
+    updateSpeedTrackVisual();
+    dbg('UI', `TV Overlay mounted (${isPseudo ? 'Pseudo-FS' : 'Native-FS'})`);
+
+    // Force window & Shadow DOM focus immediately and maintain it so Android TV Spatial Nav doesn't steal D-Pad
+    const enforceTvFocus = () => {
+      if (!state.overlay || state.destroyed || document.hidden) return;
+      try {
+        window.focus();
+        const active = shadowRoot.activeElement;
+        if (!active || active === document.body) {
+          const target = (state.focusedEl && isElementVisible(state.focusedEl)) ? state.focusedEl : playBtn;
+          setTvFocus(target);
+        }
+      } catch (_) {}
+    };
+    setTimeout(enforceTvFocus, 30);
+    setTimeout(enforceTvFocus, 250);
+    state.focusKeeperTimer = setInterval(enforceTvFocus, 900);
+
+    addEvent(backdrop, 'click', e => {
+      e.stopPropagation();
+      if (overlay.classList.contains('hidden-ui')) {
+        resetAutoHide();
+        setTvFocus(playBtn);
+      } else {
+        collapseAllMenus();
+        overlay.classList.add('hidden-ui');
+        clearHide();
+        cancelProgress();
+      }
+    });
+
+    addEvent(debugClearBtn, 'click', e => {
+      e.stopPropagation();
+      state.debugLogs.length = 0;
+      renderDebugConsole();
+    });
+
+    addEvent(nextEpBtn, 'click', e => {
+      e.stopPropagation();
+      triggerSeamlessNextEpisode(true);
+      resetAutoHide();
+    });
+
+    function syncSeekBadges() {
+      const txts = overlay.querySelectorAll('.v271-seek-txt');
+      const fontSize = state.seekStep >= 100 ? '5.8' : '7.5';
+      for (let i = 0; i < txts.length; i++) {
+        txts[i].textContent = String(state.seekStep);
+        txts[i].setAttribute('font-size', fontSize);
+      }
+    }
+    syncSeekBadges();
+
+    addEvent(playBtn, 'click', e => {
+      e.stopPropagation();
+      if (state.video.paused) {
+        clickPlayerBigPlayButton();
+        safePlay(state.video);
+        setTimeout(() => {
+          if (state.video && state.video.paused && !state.destroyed) {
+            clickPlayerBigPlayButton();
+            safePlay(state.video);
+          }
+        }, 220);
+      } else {
+        state.video.pause();
+      }
+      resetAutoHide();
+    });
+
+    addEvent(backBtn, 'click', e => {
+      e.stopPropagation();
+      const step = state.seekStep;
+      safeSeek(state.video, state.video.currentTime - step, false);
+      showHud(`-${step} วินาที`, 950, 'back');
+      resetAutoHide();
+    });
+
+    addEvent(nextBtn, 'click', e => {
+      e.stopPropagation();
+      const step = state.seekStep;
+      safeSeek(state.video, state.video.currentTime + step, false);
+      showHud(`+${step} วินาที`, 950, 'next');
+      resetAutoHide();
+    });
+
+    /* --- Rocket Speed Slider Controls --- */
+    function scheduleSpeedCollapse(delay = 3500) {
+      clearSpeedHide();
+      state.speedHideTimer = setTimeout(() => {
+        state.speedHideTimer = 0;
+        if (!state.interactingSlider && state.focusedEl !== speedInput && state.focusedEl !== speedVal) {
+          speedWrap.classList.remove('expanded');
+        }
+      }, delay);
+    }
+
+    addEvent(speedBtn, 'click', e => {
+      e.stopPropagation();
+      collapseSettingsPanel();
+      const willExpand = !speedWrap.classList.contains('expanded');
+      if (willExpand) {
+        const curRate = Math.round(clamp(Number(state.video?.playbackRate) || 1, state.minSpeed, state.maxSpeed) * 100) / 100;
+        speedInput.min = String(state.minSpeed);
+        speedInput.max = String(state.maxSpeed);
+        speedInput.value = String(curRate);
+        speedVal.textContent = formatSpeed(curRate);
+        updateSpeedTrackVisual();
+        speedWrap.classList.add('expanded');
+        setTvFocus(speedInput);
+        scheduleSpeedCollapse(4000);
+      } else {
+        collapseSpeedSlider();
+        setTvFocus(speedBtn);
+      }
+      resetAutoHide();
+    });
+
+    addEvent(speedVal, 'click', e => {
+      e.stopPropagation();
+      const resetRate = clamp(1, state.minSpeed, state.maxSpeed);
+      state.savedSpeed = resetRate;
+      try { state.video.playbackRate = resetRate; } catch (_) {}
+      speedInput.value = String(resetRate);
+      speedVal.textContent = formatSpeed(resetRate);
+      updateSpeedTrackVisual();
+      showHud(`ความเร็ว ${formatSpeed(resetRate)}`, 900, 'rocket');
+      resetAutoHide();
+    });
+
+    addEvent(speedInput, 'input', e => {
+      e.stopPropagation();
+      const val = Math.round(clamp(Number(e.target.value), state.minSpeed, state.maxSpeed) * 100) / 100;
+      if (!Number.isFinite(val)) return;
+      state.savedSpeed = val;
+      try { state.video.playbackRate = val; } catch (_) {}
+      speedVal.textContent = formatSpeed(val);
+      updateSpeedTrackVisual();
+      showHud(`ความเร็ว ${formatSpeed(val)}`, 700, 'rocket');
+      resetAutoHide();
+    });
+
+    addEvent(settingsBtn, 'click', e => {
+      e.stopPropagation();
+      collapseSpeedSlider();
+      const willExpand = !settingsWrap.classList.contains('expanded');
+      if (willExpand) {
+        if (dtStepVal) dtStepVal.textContent = `${state.seekStep}s`;
+        if (maxSpeedVal) maxSpeedVal.textContent = `${state.maxSpeed}x`;
+        if (autoNextToggle) autoNextToggle.checked = Boolean(state.autoNextEnabled);
+        if (resumeToggle) resumeToggle.checked = Boolean(state.resumeEnabled);
+        if (debugToggle) debugToggle.checked = Boolean(state.debugEnabled);
+        settingsWrap.classList.add('expanded');
+        overlay.classList.add('settings-open');
+        clearHide();
+        setTvFocus(dtStepInc);
+        scheduleSettingsCollapse(8000);
+      } else {
+        collapseSettingsPanel();
+        setTvFocus(settingsBtn);
+        resetAutoHide();
+      }
+    });
+
+    addEvent(autoNextToggle, 'change', e => {
+      e.stopPropagation();
+      state.autoNextEnabled = Boolean(e.target.checked);
+      savePrefs();
+      showHud(state.autoNextEnabled ? 'เปิดเล่น EP ถัดไปอัตโนมัติ' : 'ปิดเล่น EP ถัดไปอัตโนมัติ', 1100, 'nextEp');
+      scheduleSettingsCollapse(6000);
+    });
+
+    addEvent(resumeToggle, 'change', e => {
+      e.stopPropagation();
+      state.resumeEnabled = Boolean(e.target.checked);
+      savePrefs();
+      showHud(state.resumeEnabled ? 'เปิดรับชมต่อจากที่ค้างไว้' : 'ปิดรับชมต่อจากที่ค้างไว้', 1100, 'history');
+      scheduleSettingsCollapse(6000);
+    });
+
+    addEvent(debugToggle, 'change', e => {
+      e.stopPropagation();
+      state.debugEnabled = Boolean(e.target.checked);
+      savePrefs();
+      if (state.debugEnabled) dbg('SYS', 'TV Visual Debug Console Activated');
+      renderDebugConsole();
+      showHud(state.debugEnabled ? 'เปิด Debug Overlay' : 'ปิด Debug Overlay', 1000, 'settings');
+      scheduleSettingsCollapse(6000);
+    });
+
+    function applyNewSeekStep(val) {
+      const nextStep = clamp(Math.round(Number(val) || 30), 5, 300);
+      state.seekStep = nextStep;
+      CFG.seekStep = nextStep;
+      if (dtStepVal) dtStepVal.textContent = `${nextStep}s`;
+      syncSeekBadges();
+      savePrefs();
+      showHud(`กดซ้าย/ขวา เลื่อนเวลา ±${nextStep} วินาที`, 1000, 'next');
+    }
+
+    addEvent(dtStepDec, 'click', e => {
+      e.stopPropagation();
+      applyNewSeekStep(state.seekStep - 5);
+      scheduleSettingsCollapse(6000);
+    });
+
+    addEvent(dtStepInc, 'click', e => {
+      e.stopPropagation();
+      applyNewSeekStep(state.seekStep + 5);
+      scheduleSettingsCollapse(6000);
+    });
+
+    function applyNewMaxSpeed(val) {
+      const nextMax = Math.round(clamp(Number(val) || 2, 1.5, 16) * 100) / 100;
+      state.maxSpeed = nextMax;
+      if (maxSpeedVal) maxSpeedVal.textContent = `${nextMax}x`;
+      speedInput.max = String(nextMax);
+      if (state.video && state.video.playbackRate > nextMax) {
+        try { state.video.playbackRate = nextMax; } catch (_) {}
+        state.savedSpeed = nextMax;
+      }
+      const curRate = Math.round(clamp(Number(state.video?.playbackRate) || 1, state.minSpeed, nextMax) * 100) / 100;
+      speedInput.value = String(curRate);
+      speedVal.textContent = formatSpeed(curRate);
+      updateSpeedTrackVisual();
+      savePrefs();
+      showHud(`ความเร็วสูงสุด ${formatSpeed(nextMax)}`, 1000, 'rocket');
+    }
+
+    addEvent(maxSpeedDec, 'click', e => {
+      e.stopPropagation();
+      applyNewMaxSpeed(state.maxSpeed - 0.5);
+      scheduleSettingsCollapse(6000);
+    });
+
+    addEvent(maxSpeedInc, 'click', e => {
+      e.stopPropagation();
+      applyNewMaxSpeed(state.maxSpeed + 0.5);
+      scheduleSettingsCollapse(6000);
+    });
+
+    addEvent(resetDefaultsBtn, 'click', e => {
+      e.stopPropagation();
+      state.seekStep = 30;
+      CFG.seekStep = 30;
+      state.minSpeed = 0.5;
+      state.maxSpeed = 2;
+      state.autoNextEnabled = true;
+      state.resumeEnabled = true;
+      state.debugEnabled = false;
+      state.savedSpeed = 1;
+      try { state.video.playbackRate = 1; } catch (_) {}
+
+      if (dtStepVal) dtStepVal.textContent = '30s';
+      if (maxSpeedVal) maxSpeedVal.textContent = '2x';
+      if (autoNextToggle) autoNextToggle.checked = true;
+      if (resumeToggle) resumeToggle.checked = true;
+      if (debugToggle) debugToggle.checked = false;
+      speedInput.min = '0.5';
+      speedInput.max = '2';
+      speedInput.value = '1';
+      speedVal.textContent = '1x';
+      updateSpeedTrackVisual();
+      renderDebugConsole();
+
+      syncSeekBadges();
+      savePrefs();
+      showHud('คืนค่าเริ่มต้นทั้งหมดแล้ว', 1100, 'settings');
+      scheduleSettingsCollapse(5000);
+    });
+
+    addEvent(aspectBtn, 'click', e => {
+      e.stopPropagation();
+      if (!state.video) return;
+      state.aspectIndex = (state.aspectIndex + 1) % ASPECT_MODES.length;
+      applyAspectMode(state.video, state.aspectIndex);
+      savePrefs();
+      showHud(ASPECT_MODES[state.aspectIndex].label, 1000, 'aspect');
+      resetAutoHide();
+    });
+
+    addEvent(exitBtn, 'click', e => {
+      e.stopPropagation();
+      exitUniversalFullscreen();
+    });
+
+    addEvent(timeline, 'input', e => {
+      e.stopPropagation();
+      const pct = Number(timeline.value);
+      styleRangeTrack(timeline, pct);
+      if (Number.isFinite(state.video.duration) && state.video.duration > 0) {
+        const targetSec = (pct / 100) * state.video.duration;
+        currentLabel.textContent = formatTime(targetSec);
+        safeSeek(state.video, targetSec, false);
+        showHud(`ไปยัง ${formatTime(targetSec)}`, 800, 'next');
+      }
+      resetAutoHide();
+    });
+
+    addEvent(brightness, 'input', e => {
+      e.stopPropagation();
+      const val = clamp(Number(e.target.value), 0.25, 1.75);
+      if (!Number.isFinite(val)) return;
+      applyBrightness(state.video, val);
+      savePrefs();
+      showHud(`ความสว่าง ${Math.round(val * 100)}%`, 750, 'sun');
+      resetAutoHide();
+    });
+
+    addEvent(volume, 'input', e => {
+      e.stopPropagation();
+      const val = clamp(Number(e.target.value), 0, 1);
+      if (!Number.isFinite(val)) return;
+      setNativeVolume(state.video, val);
+      updateVolumeIcon();
+      showHud(`ระดับเสียง ${Math.round(val * 100)}%`, 750, val <= 0 ? 'mute' : 'volume');
+      resetAutoHide();
+    });
+
+    addEvent(muteBtn, 'click', e => {
+      e.stopPropagation();
+      try {
+        const currentEffective = state.video.muted ? 0 : state.video.volume;
+        if (currentEffective > 0) {
+          state.lastVolume = currentEffective;
+          setNativeVolume(state.video, 0);
+          volume.value = '0';
+          showHud('ปิดเสียง', 900, 'mute');
+        } else {
+          const restore = state.lastVolume > 0 ? state.lastVolume : 1;
+          setNativeVolume(state.video, restore);
+          volume.value = String(restore);
+          showHud(`เสียง ${Math.round(restore * 100)}%`, 900, 'volume');
+        }
+      } catch (_) {}
+      updateVolumeIcon();
+      resetAutoHide();
+    });
+
+    /* --- Multi-Layer Remote Key Interceptor (ShadowRoot + Document + Window, Keydown + Keyup) --- */
+    const onRemoteKeyEvent = e => {
+      if (!state.overlay || !state.video) return;
+      const cmd = normalizeRemoteCommand(e);
+      if (!cmd) return;
+      processRemoteCommand(cmd, e);
+    };
+
+    addEvent(shadowRoot, 'keydown', onRemoteKeyEvent, { capture: true });
+    addEvent(shadowRoot, 'keyup', onRemoteKeyEvent, { capture: true });
+    addEvent(document, 'keydown', onRemoteKeyEvent, { capture: true });
+    addEvent(document, 'keyup', onRemoteKeyEvent, { capture: true });
+    addEvent(window, 'keydown', onRemoteKeyEvent, { capture: true });
+    addEvent(window, 'keyup', onRemoteKeyEvent, { capture: true });
+
+    /* --- Scoped Video & Container Observers + Safe Ad Skipper --- */
+    startAdWatcher();
+
+    function observeVideoAttributes(v) {
+      if (state.videoObserver) state.videoObserver.disconnect();
+      state.videoObserver = new MutationObserver(() => {
+        if (!state.video) return;
+        if (state.video.controls || state.video.hasAttribute('controls')) {
+          state.video.controls = false;
+          state.video.removeAttribute('controls');
+        }
+        const expectedFit = ASPECT_MODES[state.aspectIndex]?.key || 'contain';
+        if (state.video.getAttribute(CFG.fitAttr) !== expectedFit) {
+          applyAspectMode(state.video, state.aspectIndex);
+        }
+      });
+      try {
+        state.videoObserver.observe(v, {
+          attributes: true,
+          attributeFilter: ['controls', 'style', 'class', CFG.fitAttr]
+        });
+      } catch (_) {}
+    }
+
+    function bindVideoListeners(v) {
+      try { state.videoAbort?.abort(); } catch (_) {}
+      state.videoAbort = new AbortController();
+      const vCtrl = state.videoAbort;
+
+      observeVideoAttributes(v);
+
+      addEvent(v, 'play', () => {
+        updatePlayIcon();
+        requestWakeLock();
+      }, false, vCtrl);
+      addEvent(v, 'pause', () => {
+        overlay.classList.remove('buffering');
+        updatePlayIcon();
+        savePlaybackPosition(v, true);
+        releaseWakeLock();
+      }, false, vCtrl);
+      addEvent(v, 'playing', () => {
+        overlay.classList.remove('buffering');
+        state.healRetryCount = 0;
+        if (Number.isFinite(v.duration) && v.duration >= CFG.minMainVideoDurationSec) {
+          if (state.savedSpeed && v.playbackRate !== state.savedSpeed) {
+            try { v.playbackRate = state.savedSpeed; } catch (_) {}
+          }
+        }
+        updatePlayIcon();
+        requestWakeLock();
+        queueProgress(true);
+      }, false, vCtrl);
+      addEvent(v, 'waiting', () => {
+        if (!v.paused) overlay.classList.add('buffering');
+      }, false, vCtrl);
+      addEvent(v, 'canplay', () => {
+        overlay.classList.remove('buffering');
+      }, false, vCtrl);
+      addEvent(v, 'ended', () => {
+        overlay.classList.remove('buffering');
+        updatePlayIcon();
+        releaseWakeLock();
+        queueProgress(true);
+
+        if (
+          state.isSkippingAd ||
+          !Number.isFinite(v.duration) ||
+          v.duration < CFG.minMainVideoDurationSec
+        ) {
+          dbg('AUTO-NEXT', `Ignored ended on short/ad clip (${Math.round(v.duration || 0)}s)`);
+          return;
+        }
+
+        if (state.autoNextEnabled) {
+          triggerSeamlessNextEpisode(false);
+        } else {
+          savePlaybackPosition(v, true);
+        }
+      }, false, vCtrl);
+      addEvent(v, 'error', () => {
+        const errCode = v.error ? v.error.code : 'unknown';
+        dbg('VIDEO', `MediaError code: ${errCode}`);
+        if (errCode === 3 || errCode === 2) {
+          attemptMediaErrorRecovery(v);
+        }
+      }, false, vCtrl);
+      addEvent(v, 'ratechange', () => {
+        if (isCurrentlyPlayingPreRollAd(v)) return;
+        const rawRate = Number(v.playbackRate) || 1;
+        const actualRate = Math.round(clamp(rawRate, state.minSpeed, state.maxSpeed) * 100) / 100;
+        if (state.refs?.speedInput && state.refs?.speedVal) {
+          state.refs.speedInput.value = String(actualRate);
+          state.refs.speedVal.textContent = formatSpeed(actualRate);
+          updateSpeedTrackVisual();
+        }
+      }, false, vCtrl);
+      addEvent(v, 'timeupdate', () => {
+        if (trySkipPreRollAdSafely(v)) return;
+
+        if (!v.seeking && !v.error && v.currentTime > 1) {
+          state.lastKnownGoodTime = v.currentTime;
+        }
+        queueProgress();
+        savePlaybackPosition(v, false);
+
+        if (
+          state.autoNextEnabled &&
+          !state.seeking &&
+          !state.isSkippingAd &&
+          Number.isFinite(v.duration) &&
+          v.duration >= CFG.minMainVideoDurationSec &&
+          v.currentTime >= v.duration - 0.5
+        ) {
+          const sig = getVideoSignature(v);
+          if (sig && state.nearEndTriggeredSig !== sig) {
+            state.nearEndTriggeredSig = sig;
+            triggerSeamlessNextEpisode(false);
+          }
+        }
+      }, false, vCtrl);
+      addEvent(v, 'durationchange', () => queueProgress(true), false, vCtrl);
+      addEvent(v, 'loadedmetadata', () => {
+        state.cachedKeysList = null;
+        state.lastKnownGoodTime = 0;
+        state.nearEndTriggeredSig = '';
+        refreshTitleCache(false);
+        if (!isCurrentlyPlayingPreRollAd(v) && Number.isFinite(v.duration) && v.duration >= CFG.minMainVideoDurationSec) {
+          try {
+            if (state.savedSpeed && state.savedSpeed !== 1) {
+              v.playbackRate = state.savedSpeed;
+            }
+          } catch (_) {}
+          tryRestorePlaybackPosition(v);
+          if (state.expectingSeamlessEpisode) {
+            safePlay(v);
+            clickPlayerBigPlayButton();
+            if (!state.overlay) {
+              setTopWindowIframeFullscreenLock(true);
+              enterUniversalFullscreen(v);
+            }
+            setTimeout(() => {
+              if (v && !v.paused) {
+                state.expectingSeamlessEpisode = false;
+                clearAutoFullscreenBridge();
+              }
+            }, 1200);
+          }
+        }
+        applyAspectMode(v, state.aspectIndex);
+        applyBrightness(v, state.brightness);
+        queueProgress(true);
+      }, false, vCtrl);
+      addEvent(v, 'volumechange', updateVolumeIcon, false, vCtrl);
+      addEvent(v, 'seeked', () => {
+        state.seeking = false;
+        savePlaybackPosition(v, true);
+        overlay.classList.remove('buffering');
+        queueProgress(true);
+      }, false, vCtrl);
+    }
+
+    bindVideoListeners(video);
+    tryRestorePlaybackPosition(video);
+
+    state.containerObserver = new MutationObserver(() => {
+      if (state.observerRaf) return;
+      state.observerRaf = requestAnimationFrame(() => {
+        state.observerRaf = 0;
+        if (!state.container || !state.shadowHost) return;
+
+        if (!state.shadowHost.isConnected) {
+          try { state.container.appendChild(state.shadowHost); } catch (_) {}
+        }
+
+        const currentInvalid = !state.video || !state.video.isConnected;
+        const candidate = bestVideo(state.container);
+        if ((currentInvalid && candidate) || (candidate && candidate !== state.video && !candidate.paused)) {
+          const replacement = candidate;
+          dbg('VIDEO', 'Re-bound to new video element inside fullscreen container');
+          state.video = replacement;
+          state.lastActiveVideo = replacement;
+          state.cachedKeysList = null;
+          replacement.controls = false;
+          replacement.removeAttribute('controls');
+          replacement.setAttribute(CFG.videoAttr, '1');
+          applyAspectMode(replacement, state.aspectIndex);
+          applyBrightness(replacement, state.brightness);
+          try { replacement.playbackRate = state.savedSpeed || 1; } catch (_) {}
+          bindVideoListeners(replacement);
+          tryRestorePlaybackPosition(replacement);
+          if (state.expectingSeamlessEpisode) {
+            safePlay(replacement);
+          }
+          updatePlayIcon();
+          queueProgress(true);
+        }
+      });
+    });
+
+    try {
+      state.containerObserver.observe(container, {
+        childList: true,
+        subtree: true
+      });
+      container.appendChild(shadowHost);
+    } catch (_) {
+      destroyController(false);
+      return;
+    }
+
+    updatePlayIcon();
+    updateVolumeIcon();
+    updateProgress(true);
+    resetAutoHide();
+  }
+
+  /* =========================================================
+     9. GLOBAL FULLSCREEN, TOP-WINDOW RELAY & MEDIA LISTENERS
+  ========================================================= */
+
+  function handleFullscreenChange() {
+    if (state.destroyed) return;
+    const fs = fullscreenElement();
+
+    if (fs) {
+      removeRecovery();
+      const video = isVideo(fs) ? fs : (bestVideo(fs) || state.lastActiveVideo);
+      if (!video || isDisqualifiedVideo(video)) return;
+
+      setTopWindowIframeFullscreenLock(false);
+      const container = fs === video ? ensureSafeContainer(video) : fs;
+      if (container && container !== video) {
+        createOverlay(video, container, false);
+      }
+      return;
+    }
+
+    if (state.expectingSeamlessEpisode || consumeAutoFullscreenBridge()) {
+      const v = bestVideo(document) || state.lastActiveVideo;
+      if (v && v.isConnected && !isDisqualifiedVideo(v)) {
+        const container = ensureSafeContainer(v);
+        if (container) {
+          dbg('FS-BRIDGE', 'Holding Full-Viewport Pseudo-Fullscreen across episode transition');
+          setTopWindowIframeFullscreenLock(true);
+          createOverlay(v, container, true);
+          safePlay(v);
+          return;
+        }
+      }
+    }
+
+    setTopWindowIframeFullscreenLock(false);
+    releaseWakeLock();
+    if (!state.pseudoFullscreen) {
+      destroyController(true);
+    }
+  }
+
+  function onMediaActivity(e) {
+    if (state.destroyed || document.hidden) return;
+    const target = e.target;
+    if (!isVideo(target) || isDisqualifiedVideo(target)) return;
+
+    state.lastActiveVideo = target;
+    invalidateBestVideoCache();
+    if (e.type === 'loadedmetadata' || !state.cachedTitle) {
+      unlockIframes();
+      refreshTitleCache(false);
+    }
+
+    const bridge = consumeAutoFullscreenBridge();
+    if (bridge && !state.overlay) {
+      if (bridge.ep) state.currentEp = bridge.ep;
+      if (typeof bridge.speed === 'number') state.savedSpeed = bridge.speed;
+      dbg('FS-BRIDGE', `Auto-entering fullscreen for ${state.currentEp || 'Next EP'}`);
+      setTopWindowIframeFullscreenLock(true);
+      enterUniversalFullscreen(target);
+      safePlay(target);
+      return;
+    }
+
+    const fs = fullscreenElement();
+    if (fs) {
+      if (!state.overlay || state.video !== target) {
+        const container = fs === target ? ensureSafeContainer(target) : fs;
+        if (container && container !== target) {
+          createOverlay(target, container, false);
+        }
+      }
+    } else if (state.pseudoFullscreen && state.overlay && state.video !== target) {
+      const container = ensureSafeContainer(target);
+      if (container) {
+        createOverlay(target, container, true);
+      }
+    } else if (!state.pseudoFullscreen) {
+      showRecovery(target);
+    }
+  }
+
+  function setupTopWindowRemoteBridge() {
+    if (window !== window.top) return;
+
+    const relayToPlayerIframe = e => {
+      if (state.overlay) return;
+      const lockedIframe = document.querySelector(`iframe[${CFG.parentIframeFsAttr}="1"]`) ||
+        (fullscreenElement()?.tagName === 'IFRAME' ? fullscreenElement() : null);
+      if (!lockedIframe || !lockedIframe.contentWindow) return;
+
+      const cmd = normalizeRemoteCommand(e);
+      if (!cmd) return;
+
+      try {
+        e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+        lockedIframe.contentWindow.postMessage({ type: 'tmv271_remote_key', cmd }, '*');
+      } catch (_) {}
+    };
+
+    window.addEventListener('keydown', relayToPlayerIframe, true);
+    window.addEventListener('keyup', relayToPlayerIframe, true);
+  }
+
+  function boot() {
+    loadPrefs();
+    patchFullscreenAPI();
+    setupEpisodeClickTracker();
+    setupTopWindowRemoteBridge();
+
+    document.addEventListener('fullscreenchange', handleFullscreenChange, true);
+    document.addEventListener('mozfullscreenchange', handleFullscreenChange, true);
+    document.addEventListener('webkitfullscreenchange', handleFullscreenChange, true);
+
+    document.addEventListener('play', onMediaActivity, true);
+    document.addEventListener('playing', onMediaActivity, true);
+    document.addEventListener('loadedmetadata', onMediaActivity, true);
+
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) {
+        if (state.video) savePlaybackPosition(state.video, true);
+        flushResumeCacheToDisk();
+        clearHide();
+        cancelProgress();
+        releaseWakeLock();
+        stopAdWatcher();
+      } else if (state.overlay) {
+        if (state.video && !state.video.paused) requestWakeLock();
+        startAdWatcher();
+        resetAutoHide();
+      }
+    });
+
+    window.addEventListener('pagehide', () => {
+      state.destroyed = true;
+      if (state.video) savePlaybackPosition(state.video, true);
+      flushResumeCacheToDisk();
+      stopAdWatcher();
+      if (state.autoPlayPollTimer) clearInterval(state.autoPlayPollTimer);
+      if (state.epScrollTimer) clearTimeout(state.epScrollTimer);
+      removeRecovery();
+      destroyController(false);
+    }, { once: true });
+
+    if (document.readyState !== 'loading') {
+      unlockIframes();
+      refreshTitleCache(false);
+      checkPendingEpisodeScrollOnLoad();
+    } else {
+      document.addEventListener('DOMContentLoaded', () => {
+        unlockIframes();
+        refreshTitleCache(false);
+        checkPendingEpisodeScrollOnLoad();
+      }, { once: true });
+    }
+  }
+
+  boot();
+})();
